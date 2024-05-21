@@ -228,8 +228,8 @@ def main():
 
         active_test_model_accuracies.append(avg_active_test_model_accuracy)
         random_test_sampling_accuracies.append(avg_random_test_sampling_accuracy)
-        active_test_model_f1.append(avg_active_test_model_accuracy)
-        random_test_sampling_f1.append(avg_random_test_sampling_accuracy)
+        active_test_model_f1.append(avg_active_test_model_f1)
+        random_test_sampling_f1.append(avg_random_test_sampling_f1)
 
         # Reset the accuracy lists for the next TRAIN_SIZE value
         active_model_accuracies = []
