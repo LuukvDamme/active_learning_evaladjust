@@ -5,7 +5,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, StratifiedKFold
-from sklearn.metrics import f1_score, precision_score
+from sklearn.metrics import f1_score, precision_score, log_loss
 import matplotlib.pyplot as plt
 
 # Constants
@@ -14,7 +14,7 @@ UNCERTAINTY_RANGE = (0.47, 0.53)  # The range of uncertainty for active learning
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"
-TRAIN_SIZE_RANGE = np.arange(0.01, 0.61, 0.1)
+TRAIN_SIZE_RANGE = np.arange(0.01, 0.31, 0.1)
 NUM_EXPERIMENTS = 100
 
 # Function to split the dataset into train, test, and unlabelled sets
@@ -47,7 +47,7 @@ def active_learning(x_train, y_train, unlabel, label):
 def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
     classifier = LogisticRegression()
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    accuracies, f1_scores, precision_scores = [], [], []
+    accuracies, f1_scores, precision_scores, losses = [], [], [], []
 
     for train_index, val_index in skf.split(x_train, y_train):
         x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
@@ -60,26 +60,49 @@ def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
         f1_scores.append(f1_score(y_val_fold, y_pred, average='weighted'))
         precision_scores.append(precision_score(y_val_fold, y_pred, average='weighted'))
 
-    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), classifier
+        y_prob = classifier.predict_proba(x_val_fold)
+        losses.append(log_loss(y_val_fold, y_prob))
+
+    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), np.mean(losses), classifier
 
 # Function to evaluate the model on the test set
 def evaluate_model_on_test_set(classifier, x_test, y_test):
     accuracy = classifier.score(x_test, y_test)
     y_pred = classifier.predict(x_test)
-    return accuracy, f1_score(y_test, y_pred, average='weighted'), precision_score(y_test, y_pred, average='weighted')
+    y_prob = classifier.predict_proba(x_test)
+    return accuracy, f1_score(y_test, y_pred, average='weighted'), precision_score(y_test, y_pred, average='weighted'), log_loss(y_test, y_prob)
 
-# Function to plot the results
-def plot_results(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1):
+# Function to plot F1 scores
+def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1):
+    plt.figure()
     plt.plot(train_sizes, avg_active_model_f1_plot, label="Active Learning train F1")
     plt.plot(train_sizes, avg_random_sampling_f1_plot, label="Random Sampling train F1")
     plt.plot(train_sizes, active_test_model_f1, label="Active Learning test F1")
     plt.plot(train_sizes, random_test_sampling_f1, label="Random Sampling test F1")
-
     plt.xlabel("Train Size")
-    plt.ylabel("Performance")
-    plt.title("Performance vs Train Size")
+    plt.ylabel("F1 Score")
+    plt.title("F1 Score vs Train Size")
     plt.legend()
     plt.show()
+
+# Function to plot losses
+def plot_losses(train_sizes, active_model_losses, random_model_losses):
+    plt.figure()
+    plt.plot(train_sizes, active_model_losses, label="Active Learning train Loss")
+    plt.plot(train_sizes, random_model_losses, label="Random Sampling train Loss")
+    plt.xlabel("Train Size")
+    plt.ylabel("Log Loss")
+    plt.title("Log Loss vs Train Size")
+    plt.legend()
+    plt.show()
+
+# Function to train the model on the entire dataset
+def train_model_on_entire_dataset(dataset):
+    x = dataset[:, :-1]  # Features
+    y = dataset[:, -1]  # Labels
+    classifier = LogisticRegression()
+    classifier.fit(x, y)
+    return classifier
 
 # Main function
 def main():
@@ -100,6 +123,7 @@ def main():
     avg_active_model_f1_plot, avg_random_sampling_f1_plot = [], []
     active_test_model_accuracies, random_test_sampling_accuracies = [], []
     active_test_model_f1, random_test_sampling_f1 = [], []
+    active_model_losses, random_model_losses = [], []
 
     # Run the experiment for each TRAIN_SIZE value
     for i, train_size in enumerate(TRAIN_SIZE_RANGE):
@@ -108,6 +132,7 @@ def main():
         active_model_f1, random_model_f1 = [], []
         active_model_test_accuracies, random_model_test_accuracies = [], []
         active_model_test_f1, random_model_test_f1 = [], []
+        active_model_losses_temp, random_model_losses_temp = [], []
 
         for _ in range(NUM_EXPERIMENTS):
             # Split the dataset into train, test, and unlabelled sets
@@ -120,7 +145,8 @@ def main():
             active_model_performance = evaluate_model_with_cross_validation(x_train, y_train)
             active_model_accuracies.append(active_model_performance[0])
             active_model_f1.append(active_model_performance[1])
-            active_classifier = active_model_performance[3]
+            active_model_losses_temp.append(active_model_performance[3])
+            active_classifier = active_model_performance[4]
 
             # Train the model without active learning
             train_size_no_active_learning = x_train.shape[0] / dataset.shape[0]
@@ -130,7 +156,8 @@ def main():
             random_model_performance = evaluate_model_with_cross_validation(x_train, y_train)
             random_sampling_accuracies.append(random_model_performance[0])
             random_model_f1.append(random_model_performance[1])
-            random_classifier = random_model_performance[3]
+            random_model_losses_temp.append(random_model_performance[3])
+            random_classifier = random_model_performance[4]
 
             # Evaluate the active model on the test set
             active_test_set_performance = evaluate_model_on_test_set(active_classifier, x_test, y_test)
@@ -151,11 +178,29 @@ def main():
         random_test_sampling_accuracies.append(np.mean(random_model_test_accuracies))
         active_test_model_f1.append(np.mean(active_model_test_f1))
         random_test_sampling_f1.append(np.mean(random_model_test_f1))
+        active_model_losses.append(np.mean(active_model_losses_temp))
+        random_model_losses.append(np.mean(random_model_losses_temp))
 
-        train_sizes.append(train_size)
+
+        entire_dataset_classifier = train_model_on_entire_dataset(dataset)
+        labeled_probabilities = entire_dataset_classifier.predict_proba(dataset[:, :-1])[:, 1]
+        unlabeled_probabilities = 1 - labeled_probabilities
+
+        weighted_active_f1_labeled = labeled_probabilities * active_model_test_f1[i]
+        weighted_active_f1_unlabeled = unlabeled_probabilities * active_model_test_f1[i]
+        weighted_random_f1_labeled = labeled_probabilities * random_model_test_f1[i]
+        weighted_random_f1_unlabeled = unlabeled_probabilities * random_model_test_f1[i]
+
+        print("Weighted active F1 labeled for train size {}: {}".format(train_size, np.mean(weighted_active_f1_labeled)))
+        print("Weighted active F1 unlabeled for train size {}: {}".format(train_size, np.mean(weighted_active_f1_unlabeled)))
+        print("Weighted random F1 labeled for train size {}: {}".format(train_size, np.mean(weighted_random_f1_labeled)))
+        print("Weighted random F1 unlabeled for train size {}: {}".format(train_size, np.mean(weighted_random_f1_unlabeled)))
 
     # Plot the results
-    plot_results(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1)
+    plot_f1_scores(TRAIN_SIZE_RANGE, avg_active_model_f1_plot, avg_random_sampling_f1_plot, 
+                   active_test_model_f1, random_test_sampling_f1)
+    plot_losses(TRAIN_SIZE_RANGE, active_model_losses, random_model_losses)
+
 
 # Run the main function
 if __name__ == "__main__":
