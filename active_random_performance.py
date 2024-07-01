@@ -5,7 +5,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, StratifiedKFold
-from sklearn.metrics import f1_score, precision_score, log_loss
+from sklearn.metrics import f1_score, precision_score, log_loss, roc_curve, auc
 import matplotlib.pyplot as plt
 
 # Constants
@@ -70,7 +70,7 @@ def evaluate_model_on_test_set(classifier, x_test, y_test):
     accuracy = classifier.score(x_test, y_test)
     y_pred = classifier.predict(x_test)
     y_prob = classifier.predict_proba(x_test)
-    return accuracy, f1_score(y_test, y_pred, average='weighted'), precision_score(y_test, y_pred, average='weighted'), log_loss(y_test, y_prob)
+    return accuracy, f1_score(y_test, y_pred, average='weighted'), precision_score(y_test, y_pred, average='weighted'), log_loss(y_test, y_prob), y_prob
 
 # Function to plot F1 scores
 def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1):
@@ -96,13 +96,19 @@ def plot_losses(train_sizes, active_model_losses, random_model_losses):
     plt.legend()
     plt.show()
 
-# Function to train the model on the entire dataset
-def train_model_on_entire_dataset(dataset):
-    x = dataset[:, :-1]  # Features
-    y = dataset[:, -1]  # Labels
-    classifier = LogisticRegression()
-    classifier.fit(x, y)
-    return classifier
+# Function to plot ROC curves
+def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random):
+    plt.figure()
+    plt.plot(fpr_active, tpr_active, color='darkorange', lw=2, label=f'Active Learning ROC curve (area = {roc_auc_active:.2f})')
+    plt.plot(fpr_random, tpr_random, color='blue', lw=2, label=f'Random Sampling ROC curve (area = {roc_auc_random:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic (ROC) Curve')
+    plt.legend(loc="lower right")
+    plt.show()
 
 # Main function
 def main():
@@ -124,6 +130,8 @@ def main():
     active_test_model_accuracies, random_test_sampling_accuracies = [], []
     active_test_model_f1, random_test_sampling_f1 = [], []
     active_model_losses, random_model_losses = [], []
+    fpr_active, tpr_active, roc_auc_active = [], [], []
+    fpr_random, tpr_random, roc_auc_random = [], [], []
 
     # Run the experiment for each TRAIN_SIZE value
     for i, train_size in enumerate(TRAIN_SIZE_RANGE):
@@ -169,6 +177,12 @@ def main():
             random_model_test_accuracies.append(random_test_set_performance[0])
             random_model_test_f1.append(random_test_set_performance[1])
 
+            # Collect ROC curve data for the last iteration
+            fpr_active_temp, tpr_active_temp, _ = roc_curve(y_test, active_test_set_performance[4][:, 1])
+            roc_auc_active_temp = auc(fpr_active_temp, tpr_active_temp)
+            fpr_random_temp, tpr_random_temp, _ = roc_curve(y_test, random_test_set_performance[4][:, 1])
+            roc_auc_random_temp = auc(fpr_random_temp, tpr_random_temp)
+
         # Calculate the average performance for the current TRAIN_SIZE value
         avg_active_model_accuracies.append(np.mean(active_model_accuracies))
         avg_random_sampling_accuracies.append(np.mean(random_sampling_accuracies))
@@ -181,26 +195,19 @@ def main():
         active_model_losses.append(np.mean(active_model_losses_temp))
         random_model_losses.append(np.mean(random_model_losses_temp))
 
-
-        entire_dataset_classifier = train_model_on_entire_dataset(dataset)
-        labeled_probabilities = entire_dataset_classifier.predict_proba(dataset[:, :-1])[:, 1]
-        unlabeled_probabilities = 1 - labeled_probabilities
-
-        weighted_active_f1_labeled = labeled_probabilities * active_model_test_f1[i]
-        weighted_active_f1_unlabeled = unlabeled_probabilities * active_model_test_f1[i]
-        weighted_random_f1_labeled = labeled_probabilities * random_model_test_f1[i]
-        weighted_random_f1_unlabeled = unlabeled_probabilities * random_model_test_f1[i]
-
-        print("Weighted active F1 labeled for train size {}: {}".format(train_size, np.mean(weighted_active_f1_labeled)))
-        print("Weighted active F1 unlabeled for train size {}: {}".format(train_size, np.mean(weighted_active_f1_unlabeled)))
-        print("Weighted random F1 labeled for train size {}: {}".format(train_size, np.mean(weighted_random_f1_labeled)))
-        print("Weighted random F1 unlabeled for train size {}: {}".format(train_size, np.mean(weighted_random_f1_unlabeled)))
+        # Collect the ROC curve data
+        fpr_active.append(fpr_active_temp)
+        tpr_active.append(tpr_active_temp)
+        roc_auc_active.append(roc_auc_active_temp)
+        fpr_random.append(fpr_random_temp)
+        tpr_random.append(tpr_random_temp)
+        roc_auc_random.append(roc_auc_random_temp)
 
     # Plot the results
     plot_f1_scores(TRAIN_SIZE_RANGE, avg_active_model_f1_plot, avg_random_sampling_f1_plot, 
                    active_test_model_f1, random_test_sampling_f1)
     plot_losses(TRAIN_SIZE_RANGE, active_model_losses, random_model_losses)
-
+    plot_roc_curve(fpr_active[-1], tpr_active[-1], roc_auc_active[-1], fpr_random[-1], tpr_random[-1], roc_auc_random[-1])
 
 # Run the main function
 if __name__ == "__main__":
