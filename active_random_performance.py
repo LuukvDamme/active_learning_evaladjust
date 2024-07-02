@@ -15,8 +15,8 @@ UNCERTAINTY_RANGE = (0.47, 0.53)  # The range of uncertainty for active learning
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"
-TRAIN_SIZE_RANGE = np.arange(0.01, 0.61, 0.1)
-NUM_EXPERIMENTS = 100
+TRAIN_SIZE_RANGE = np.arange(0.01, 0.31, 0.1)
+NUM_EXPERIMENTS = 1
 
 # Function to split the dataset into train, test, and unlabelled sets
 def split_dataset(dataset, train_size, test_size):
@@ -111,34 +111,72 @@ def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_rando
     plt.legend(loc="lower right")
     plt.show()
 
-def fit_and_plot_gmm_density(x_test, y_test, n_components=2):
-    # Fit a Gaussian Mixture Model to the test data
-    gmm = GaussianMixture(n_components=n_components, random_state=42)
-    gmm.fit(x_test)
+def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
+    # Fit a Gaussian Mixture Model to the train data
+    gmm_train = GaussianMixture(n_components=n_components, random_state=42)
+    gmm_train.fit(x_train)
     
-    # Predict the density for each point in the test set
-    densities = gmm.score_samples(x_test)
+    # Predict the density for each point in the train set
+    densities_train = gmm_train.score_samples(x_train)
     
-    # Plotting the density
+    # Plotting the density for the train set
     plt.figure(figsize=(10, 6))
-    plt.hist(densities, bins=30, density=True, alpha=0.6, color='g')
-    plt.title("Density Estimation with Gaussian Mixture Model")
-    plt.xlabel("Log Likelihood")
-    plt.ylabel("Density")
-    plt.show()
-
-    # Visualize the distribution of densities for each class
-    plt.figure(figsize=(10, 6))
-    for label in np.unique(y_test):
-        label_densities = densities[y_test == label]
-        plt.hist(label_densities, bins=30, density=True, alpha=0.6, label=f'Class {label}')
-    plt.title("Density Estimation by Class with Gaussian Mixture Model")
+    plt.hist(densities_train, bins=30, density=True, alpha=0.6, color='b', label='Train')
+    plt.title("Density Estimation with Gaussian Mixture Model (Train Set)")
     plt.xlabel("Log Likelihood")
     plt.ylabel("Density")
     plt.legend()
     plt.show()
 
+    # Fit a Gaussian Mixture Model to the test data
+    gmm_test = GaussianMixture(n_components=n_components, random_state=42)
+    gmm_test.fit(x_test)
+    
+    # Predict the density for each point in the test set
+    densities_test = gmm_test.score_samples(x_test)
+    
+    # Plotting the density for the test set
+    plt.figure(figsize=(10, 6))
+    plt.hist(densities_test, bins=30, density=True, alpha=0.6, color='g', label='Unlabeled')
+    plt.title("Density Estimation with Gaussian Mixture Model (Unlabeled Set)")
+    plt.xlabel("Log Likelihood")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.show()
+    
+    # Combined plot for train and test set densities
+    plt.figure(figsize=(10, 6))
+    plt.hist(densities_train, bins=30, density=True, alpha=0.6, color='b', label='Train')
+    plt.hist(densities_test, bins=30, density=True, alpha=0.6, color='g', label='Unlabeled')
+    plt.title("Density Estimation with Gaussian Mixture Model (Train and Unlabeled Sets)")
+    plt.xlabel("Log Likelihood")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.show()
 
+    # Visualize the distribution of densities for each class in the train set
+    plt.figure(figsize=(10, 6))
+    for label in np.unique(y_train):
+        label_densities = densities_train[y_train == label]
+        plt.hist(label_densities, bins=30, density=True, alpha=0.6, label=f'Train Class {label}')
+    plt.title("Density Estimation by Class with Gaussian Mixture Model (Train Set)")
+    plt.xlabel("Log Likelihood")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.show()
+    
+    # Visualize the distribution of densities for each class in the test set
+    plt.figure(figsize=(10, 6))
+    for label in np.unique(y_test):
+        label_densities = densities_test[y_test == label]
+        plt.hist(label_densities, bins=30, density=True, alpha=0.6, label=f'Unlabeled Class {label}')
+    plt.title("Density Estimation by Class with Gaussian Mixture Model (Unlabeled Set)")
+    plt.xlabel("Log Likelihood")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.show()
+
+# Modify the main function to pass x_train and y_train to the updated fit_and_plot_gmm_density function
 def main():
     # Read the dataset
     dataset = pd.read_csv(DATA_URL).values
@@ -231,6 +269,10 @@ def main():
         tpr_random.append(tpr_random_temp)
         roc_auc_random.append(roc_auc_random_temp)
 
+        print(f"label shape (no active learning): {label.shape}")
+        print(f"unlabel shape (no active learning): {unlabel.shape}")
+        #fit_and_plot_gmm_density(x_train, y_train, unlabel, label)
+
     # Plot the results
     plot_f1_scores(TRAIN_SIZE_RANGE, avg_active_model_f1_plot, avg_random_sampling_f1_plot, 
                    active_test_model_f1, random_test_sampling_f1)
@@ -240,8 +282,8 @@ def main():
     # Print the shape of x_test and y_test again after the second split
     print(f"x_test shape (no active learning): {x_test.shape}")
     print(f"y_test shape (no active learning): {y_test.shape}")
-    # Fit and plot GMM density for the last test set (as an example)
-    fit_and_plot_gmm_density(x_test, y_test)
+    # Fit and plot GMM density for the last test set (both with and without active learning)
+    fit_and_plot_gmm_density(x_train, y_train, unlabel, label)
 
 # Run the main function
 if __name__ == "__main__":
