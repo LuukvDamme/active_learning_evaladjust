@@ -7,6 +7,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import f1_score, precision_score, log_loss, roc_curve, auc
 import matplotlib.pyplot as plt
+from sklearn.mixture import GaussianMixture
 
 # Constants
 TEST_SIZE = 0.25  # The size of the test set as a fraction of the dataset
@@ -14,7 +15,7 @@ UNCERTAINTY_RANGE = (0.47, 0.53)  # The range of uncertainty for active learning
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"
-TRAIN_SIZE_RANGE = np.arange(0.01, 0.31, 0.1)
+TRAIN_SIZE_RANGE = np.arange(0.01, 0.61, 0.1)
 NUM_EXPERIMENTS = 100
 
 # Function to split the dataset into train, test, and unlabelled sets
@@ -110,7 +111,34 @@ def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_rando
     plt.legend(loc="lower right")
     plt.show()
 
-# Main function
+def fit_and_plot_gmm_density(x_test, y_test, n_components=2):
+    # Fit a Gaussian Mixture Model to the test data
+    gmm = GaussianMixture(n_components=n_components, random_state=42)
+    gmm.fit(x_test)
+    
+    # Predict the density for each point in the test set
+    densities = gmm.score_samples(x_test)
+    
+    # Plotting the density
+    plt.figure(figsize=(10, 6))
+    plt.hist(densities, bins=30, density=True, alpha=0.6, color='g')
+    plt.title("Density Estimation with Gaussian Mixture Model")
+    plt.xlabel("Log Likelihood")
+    plt.ylabel("Density")
+    plt.show()
+
+    # Visualize the distribution of densities for each class
+    plt.figure(figsize=(10, 6))
+    for label in np.unique(y_test):
+        label_densities = densities[y_test == label]
+        plt.hist(label_densities, bins=30, density=True, alpha=0.6, label=f'Class {label}')
+    plt.title("Density Estimation by Class with Gaussian Mixture Model")
+    plt.xlabel("Log Likelihood")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.show()
+
+
 def main():
     # Read the dataset
     dataset = pd.read_csv(DATA_URL).values
@@ -208,6 +236,12 @@ def main():
                    active_test_model_f1, random_test_sampling_f1)
     plot_losses(TRAIN_SIZE_RANGE, active_model_losses, random_model_losses)
     plot_roc_curve(fpr_active[-1], tpr_active[-1], roc_auc_active[-1], fpr_random[-1], tpr_random[-1], roc_auc_random[-1])
+
+    # Print the shape of x_test and y_test again after the second split
+    print(f"x_test shape (no active learning): {x_test.shape}")
+    print(f"y_test shape (no active learning): {y_test.shape}")
+    # Fit and plot GMM density for the last test set (as an example)
+    fit_and_plot_gmm_density(x_test, y_test)
 
 # Run the main function
 if __name__ == "__main__":
