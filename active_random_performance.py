@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from sklearn.mixture import GaussianMixture
 
 # Constants
-TEST_SIZE = 0.25  # The size of the test set as a fraction of the dataset
+TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
 UNCERTAINTY_RANGE = (0.47, 0.53)  # The range of uncertainty for active learning
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
@@ -18,13 +18,16 @@ DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/s
 TRAIN_SIZE_RANGE = np.arange(0.01, 0.31, 0.1)
 NUM_EXPERIMENTS = 1
 
-# Function to split the dataset into train, test, and unlabelled sets
-def split_dataset(dataset, train_size, test_size):
+# Function to split the dataset into train, pool, test, and unlabelled sets
+def split_dataset_initial(dataset, train_size):
     x = dataset[:, :-1]  # Features
-    y = dataset[:, -1]  # Labels
-    x_train, x_pool, y_train, y_pool = train_test_split(x, y, train_size=train_size)
-    unlabel, x_test, label, y_test = train_test_split(x_pool, y_pool, test_size=test_size)
-    return x_train, y_train, x_test, y_test, unlabel, label
+    y = dataset[:, -1].astype(int)  # Labels as integers
+    x_train, x_pool, y_train, y_pool = train_test_split(x, y, train_size=train_size, random_state=42, stratify=y)
+    return x_train, y_train, x_pool, y_pool
+
+def split_pool_set(x_pool, y_pool, test_size):
+    unlabel, x_test, label, y_test = train_test_split(x_pool, y_pool, test_size=test_size, random_state=42, stratify=y_pool)
+    return unlabel, label, x_test, y_test
 
 # Function to train the model
 def train_model(x_train, y_train):
@@ -157,134 +160,80 @@ def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
     # Visualize the distribution of densities for each class in the train set
     plt.figure(figsize=(10, 6))
     for label in np.unique(y_train):
-        label_densities = densities_train[y_train == label]
-        plt.hist(label_densities, bins=30, density=True, alpha=0.6, label=f'Train Class {label}')
-    plt.title("Density Estimation by Class with Gaussian Mixture Model (Train Set)")
-    plt.xlabel("Log Likelihood")
-    plt.ylabel("Density")
-    plt.legend()
-    plt.show()
+        densities_label = gmm_train.score_samples(x_train[y_train == label])
+        plt.hist(densities_label, bins=30, density=True, alpha=0.6, label=f'Train - Class {label}')
     
-    # Visualize the distribution of densities for each class in the test set
-    plt.figure(figsize=(10, 6))
-    for label in np.unique(y_test):
-        label_densities = densities_test[y_test == label]
-        plt.hist(label_densities, bins=30, density=True, alpha=0.6, label=f'Unlabeled Class {label}')
-    plt.title("Density Estimation by Class with Gaussian Mixture Model (Unlabeled Set)")
+    plt.title("Density Estimation for Each Class in the Train Set")
     plt.xlabel("Log Likelihood")
     plt.ylabel("Density")
     plt.legend()
     plt.show()
 
-# Modify the main function to pass x_train and y_train to the updated fit_and_plot_gmm_density function
+# Main function to run the experiments
 def main():
-    # Read the dataset
-    dataset = pd.read_csv(DATA_URL).values
+    # Load and preprocess the dataset
+    dataset = pd.read_csv(DATA_URL).to_numpy()
+    imputer = SimpleImputer(strategy='mean')
+    scaler = StandardScaler()
+    dataset = imputer.fit_transform(dataset)
+    dataset = scaler.fit_transform(dataset)
 
-    # Impute missing data
-    imputer = SimpleImputer(missing_values=0, strategy="mean")
-    dataset[:, :-1] = imputer.fit_transform(dataset[:, :-1])
+    # Ensure labels are integers
+    dataset[:, -1] = dataset[:, -1].astype(int)
 
-    # Feature scaling
-    sc = StandardScaler()
-    dataset[:, :-1] = sc.fit_transform(dataset[:, :-1])
+    # Split the pool set into unlabelled and test sets (static split)
+    x_pool, y_pool = dataset[:, :-1], dataset[:, -1]
+    unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
 
-    # Initialize lists to store the performance
     train_sizes = []
-    avg_active_model_accuracies, avg_random_sampling_accuracies = [], []
+    active_test_model_f1, active_test_model_precision, active_test_model_accuracy = [], [], []
+    random_test_sampling_f1, random_test_sampling_precision, random_test_sampling_accuracy = [], [], []
     avg_active_model_f1_plot, avg_random_sampling_f1_plot = [], []
-    active_test_model_accuracies, random_test_sampling_accuracies = [], []
-    active_test_model_f1, random_test_sampling_f1 = [], []
     active_model_losses, random_model_losses = [], []
-    fpr_active, tpr_active, roc_auc_active = [], [], []
-    fpr_random, tpr_random, roc_auc_random = [], [], []
 
-    # Run the experiment for each TRAIN_SIZE value
-    for i, train_size in enumerate(TRAIN_SIZE_RANGE):
-        print(f"Processing TRAIN_SIZE {train_size:.2f} ({i+1}/{len(TRAIN_SIZE_RANGE)})...")
-        active_model_accuracies, random_sampling_accuracies = [], []
-        active_model_f1, random_model_f1 = [], []
-        active_model_test_accuracies, random_model_test_accuracies = [], []
-        active_model_test_f1, random_model_test_f1 = [], []
-        active_model_losses_temp, random_model_losses_temp = [], []
+    for train_size in TRAIN_SIZE_RANGE:
+        for experiment in range(NUM_EXPERIMENTS):
+            x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, train_size)
+            
+            # Ensure test and unlabelled sets are the same for each iteration
+            current_unlabel, current_label = unlabel.copy(), label.copy()
 
-        for _ in range(NUM_EXPERIMENTS):
-            # Split the dataset into train, test, and unlabelled sets
-            x_train, y_train, x_test, y_test, unlabel, label = split_dataset(dataset, train_size, TEST_SIZE)
+            # Active Learning
+            x_train_active, y_train_active, _, _ = active_learning(x_train, y_train, current_unlabel, current_label)
+            avg_accuracy_active, avg_f1_active, avg_precision_active, avg_loss_active, classifier_active = evaluate_model_with_cross_validation(x_train_active, y_train_active)
+            active_model_losses.append(avg_loss_active)
+            avg_active_model_f1_plot.append(avg_f1_active)
 
-            # Train the model with active learning
-            x_train, y_train, unlabel, label = active_learning(x_train, y_train, unlabel, label)
+            accuracy_active, f1_active, precision_active, loss_active, y_prob_active = evaluate_model_on_test_set(classifier_active, x_test, y_test)
+            active_test_model_f1.append(f1_active)
+            active_test_model_precision.append(precision_active)
+            active_test_model_accuracy.append(accuracy_active)
 
-            # Evaluate the model with active learning and cross-validation
-            active_model_performance = evaluate_model_with_cross_validation(x_train, y_train)
-            active_model_accuracies.append(active_model_performance[0])
-            active_model_f1.append(active_model_performance[1])
-            active_model_losses_temp.append(active_model_performance[3])
-            active_classifier = active_model_performance[4]
+            # Random Sampling
+            avg_accuracy_random, avg_f1_random, avg_precision_random, avg_loss_random, classifier_random = evaluate_model_with_cross_validation(x_train, y_train)
+            random_model_losses.append(avg_loss_random)
+            avg_random_sampling_f1_plot.append(avg_f1_random)
 
-            # Train the model without active learning
-            train_size_no_active_learning = x_train.shape[0] / dataset.shape[0]
-            x_train, y_train, x_test, y_test, unlabel, label = split_dataset(dataset, train_size_no_active_learning, TEST_SIZE)
+            accuracy_random, f1_random, precision_random, loss_random, y_prob_random = evaluate_model_on_test_set(classifier_random, x_test, y_test)
+            random_test_sampling_f1.append(f1_random)
+            random_test_sampling_precision.append(precision_random)
+            random_test_sampling_accuracy.append(accuracy_random)
+        
+        train_sizes.append(train_size)
 
-            # Evaluate the model without active learning
-            random_model_performance = evaluate_model_with_cross_validation(x_train, y_train)
-            random_sampling_accuracies.append(random_model_performance[0])
-            random_model_f1.append(random_model_performance[1])
-            random_model_losses_temp.append(random_model_performance[3])
-            random_classifier = random_model_performance[4]
+    # Plot results
+    plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1)
+    plot_losses(train_sizes, active_model_losses, random_model_losses)
+    
+    # Plot ROC curve for the final model
+    fpr_active, tpr_active, _ = roc_curve(y_test, y_prob_active[:, 1])
+    roc_auc_active = auc(fpr_active, tpr_active)
+    fpr_random, tpr_random, _ = roc_curve(y_test, y_prob_random[:, 1])
+    roc_auc_random = auc(fpr_random, tpr_random)
+    plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random)
 
-            # Evaluate the active model on the test set
-            active_test_set_performance = evaluate_model_on_test_set(active_classifier, x_test, y_test)
-            active_model_test_accuracies.append(active_test_set_performance[0])
-            active_model_test_f1.append(active_test_set_performance[1])
+    # Fit and plot GMM densities
+    fit_and_plot_gmm_density(x_train_active, y_train_active, unlabel, label)
 
-            # Evaluate the random model on the test set
-            random_test_set_performance = evaluate_model_on_test_set(random_classifier, x_test, y_test)
-            random_model_test_accuracies.append(random_test_set_performance[0])
-            random_model_test_f1.append(random_test_set_performance[1])
-
-            # Collect ROC curve data for the last iteration
-            fpr_active_temp, tpr_active_temp, _ = roc_curve(y_test, active_test_set_performance[4][:, 1])
-            roc_auc_active_temp = auc(fpr_active_temp, tpr_active_temp)
-            fpr_random_temp, tpr_random_temp, _ = roc_curve(y_test, random_test_set_performance[4][:, 1])
-            roc_auc_random_temp = auc(fpr_random_temp, tpr_random_temp)
-
-        # Calculate the average performance for the current TRAIN_SIZE value
-        avg_active_model_accuracies.append(np.mean(active_model_accuracies))
-        avg_random_sampling_accuracies.append(np.mean(random_sampling_accuracies))
-        avg_active_model_f1_plot.append(np.mean(active_model_f1))
-        avg_random_sampling_f1_plot.append(np.mean(random_model_f1))
-        active_test_model_accuracies.append(np.mean(active_model_test_accuracies))
-        random_test_sampling_accuracies.append(np.mean(random_model_test_accuracies))
-        active_test_model_f1.append(np.mean(active_model_test_f1))
-        random_test_sampling_f1.append(np.mean(random_model_test_f1))
-        active_model_losses.append(np.mean(active_model_losses_temp))
-        random_model_losses.append(np.mean(random_model_losses_temp))
-
-        # Collect the ROC curve data
-        fpr_active.append(fpr_active_temp)
-        tpr_active.append(tpr_active_temp)
-        roc_auc_active.append(roc_auc_active_temp)
-        fpr_random.append(fpr_random_temp)
-        tpr_random.append(tpr_random_temp)
-        roc_auc_random.append(roc_auc_random_temp)
-
-        print(f"label shape (no active learning): {label.shape}")
-        print(f"unlabel shape (no active learning): {unlabel.shape}")
-        #fit_and_plot_gmm_density(x_train, y_train, unlabel, label)
-
-    # Plot the results
-    plot_f1_scores(TRAIN_SIZE_RANGE, avg_active_model_f1_plot, avg_random_sampling_f1_plot, 
-                   active_test_model_f1, random_test_sampling_f1)
-    plot_losses(TRAIN_SIZE_RANGE, active_model_losses, random_model_losses)
-    plot_roc_curve(fpr_active[-1], tpr_active[-1], roc_auc_active[-1], fpr_random[-1], tpr_random[-1], roc_auc_random[-1])
-
-    # Print the shape of x_test and y_test again after the second split
-    print(f"x_test shape (no active learning): {x_test.shape}")
-    print(f"y_test shape (no active learning): {y_test.shape}")
-    # Fit and plot GMM density for the last test set (both with and without active learning)
-    fit_and_plot_gmm_density(x_train, y_train, unlabel, label)
-
-# Run the main function
 if __name__ == "__main__":
     main()
