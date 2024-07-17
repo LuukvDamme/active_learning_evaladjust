@@ -10,13 +10,12 @@ from sklearn.mixture import GaussianMixture
 
 # Constants
 TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
-UNCERTAINTY_RANGE = (0.47, 0.53)  # The range of uncertainty for active learning
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"
-#DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data"
-TRAIN_SIZE_RANGE = np.arange(0.01, 0.71, 0.1)
+TRAIN_SIZE_RANGE = np.arange(0.10, 0.90, 0.05)
 NUM_EXPERIMENTS = 1
+INITIAL_TRAIN_SIZE_PERCENTAGE = 0.05  # Initial training set size as a fraction of the dataset
 
 # Function to split the dataset into train, pool, test, and unlabelled sets
 def split_dataset_initial(dataset, train_size):
@@ -31,25 +30,40 @@ def split_pool_set(x_pool, y_pool, test_size):
 
 # Function to train the model
 def train_model(x_train, y_train):
-    classifier = LogisticRegression()
+    classifier = LogisticRegression(max_iter=1000)
     classifier.fit(x_train, y_train)
     return classifier
 
 # Function to perform active learning
-def active_learning(x_train, y_train, unlabel, label):
-    for _ in range(ACTIVE_LEARNING_ROUNDS):
+def active_learning(x_train, y_train, unlabel, label, target_train_size, total_data_size):
+    rounds = 0
+    while len(y_train) < target_train_size and rounds < ACTIVE_LEARNING_ROUNDS:
         classifier = train_model(x_train, y_train)
-        y_probab = classifier.predict_proba(unlabel)[:, 0]
-        uncertainty_indices = np.where((y_probab >= UNCERTAINTY_RANGE[0]) & (y_probab <= UNCERTAINTY_RANGE[1]))[0]
-        x_train = np.append(unlabel[uncertainty_indices, :], x_train, axis=0)
-        y_train = np.append(label[uncertainty_indices], y_train)
-        unlabel = np.delete(unlabel, uncertainty_indices, axis=0)
-        label = np.delete(label, uncertainty_indices)
+
+        if len(unlabel) == 0:
+            print("No more samples to select from. Stopping active learning.")
+            break
+        
+        y_probab = classifier.predict_proba(unlabel)[:, 1]  # Probability of class 1
+        uncertainties = np.abs(y_probab - 0.5)  # Uncertainty is highest when probability is close to 0.5
+        uncertain_indices = np.argsort(uncertainties)[:min(len(uncertainties), target_train_size - len(y_train))]  # Select most uncertain samples
+
+        if len(uncertain_indices) == 0:
+            break
+
+        x_train = np.append(unlabel[uncertain_indices, :], x_train, axis=0)
+        y_train = np.append(label[uncertain_indices], y_train)
+        unlabel = np.delete(unlabel, uncertain_indices, axis=0)
+        label = np.delete(label, uncertain_indices)
+        rounds += 1
+        current_train_percentage = (len(y_train) / total_data_size) * 100
+        print(f"Round {rounds}: Added {len(uncertain_indices)} samples, total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
+
     return x_train, y_train, unlabel, label
 
 # Function to evaluate the model with cross-validation
 def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
-    classifier = LogisticRegression()
+    classifier = LogisticRegression(max_iter=1000)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     accuracies, f1_scores, precision_scores, losses = [], [], [], []
 
@@ -145,120 +159,95 @@ def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
 
 def main():
     # Load and preprocess the dataset
-    dataset = pd.read_csv(DATA_URL).to_numpy()
-    imputer = SimpleImputer(strategy='mean')
-    scaler = StandardScaler()
-    dataset = imputer.fit_transform(dataset)
-    dataset = scaler.fit_transform(dataset)
-    dataset[:, -1] = dataset[:, -1].astype(int)
+    df = pd.read_csv(DATA_URL, header=None)
+    dataset = df.values
 
-    # Split the pool set into unlabelled and test sets (static split)
+    # Impute missing values with the mean of each column
+    imputer = SimpleImputer(strategy="mean")
+    dataset = imputer.fit_transform(dataset)
+
+    # Standardize the dataset
+    scaler = StandardScaler()
+    dataset[:, :-1] = scaler.fit_transform(dataset[:, :-1])
+
+    # Split the dataset into unlabel, label, x_test, and y_test sets
     x_pool, y_pool = dataset[:, :-1], dataset[:, -1]
     unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
 
     results = {
         'train_sizes': [],
         'active_test_model_f1': [],
-        'active_test_model_f1_weighted': [],
-        'active_test_model_f1_difference': [],
         'random_test_sampling_f1': [],
-        'random_test_sampling_f1_weighted': [],
-        'random_test_sampling_f1_difference': [],
         'avg_active_model_f1_plot': [],
         'avg_random_sampling_f1_plot': [],
         'active_model_losses': [],
-        'random_model_losses': [],
+        'random_model_losses': []
     }
 
-    for train_size in TRAIN_SIZE_RANGE:
+    initial_train_size = int(len(dataset) * INITIAL_TRAIN_SIZE_PERCENTAGE)
+    total_data_size = len(dataset)
+
+    for target_train_size in TRAIN_SIZE_RANGE:
+        target_train_size = int(len(dataset) * target_train_size)
+        results['train_sizes'].append(target_train_size)
+
+        active_f1_scores = []
+        random_f1_scores = []
+        active_losses = []
+        random_losses = []
+
         for experiment in range(NUM_EXPERIMENTS):
-            x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, train_size)
+            # Split the dataset into the initial training and pool sets
+            x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size)
             current_unlabel, current_label = unlabel.copy(), label.copy()
 
             # Active Learning
-            x_train_active, y_train_active, _, _ = active_learning(x_train, y_train, current_unlabel, current_label)
+            x_train_active, y_train_active, _, _ = active_learning(x_train, y_train, current_unlabel, current_label, target_train_size, total_data_size)
             avg_accuracy_active, avg_f1_active, avg_precision_active, avg_loss_active, classifier_active = evaluate_model_with_cross_validation(x_train_active, y_train_active)
-            results['active_model_losses'].append(avg_loss_active)
-            results['avg_active_model_f1_plot'].append(avg_f1_active)
-
-            # Evaluate with weighted F1
-            weights_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
-            accuracy_active, f1_active, precision_active, loss_active, y_prob_active = evaluate_model_on_test_set(classifier_active, x_test, y_test)
-            f1_active_weighted, _, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, weights_active)
-
+            active_f1_scores.append(avg_f1_active)
+            active_losses.append(avg_loss_active)
+            accuracy_active, f1_active, _, loss_active, y_prob_active = evaluate_model_on_test_set(classifier_active, x_test, y_test)
             results['active_test_model_f1'].append(f1_active)
-            results['active_test_model_f1_weighted'].append(f1_active_weighted)
-            results['active_test_model_f1_difference'].append(f1_active_weighted - f1_active)
 
             # Random Sampling
-            avg_accuracy_random, avg_f1_random, avg_precision_random, avg_loss_random, classifier_random = evaluate_model_with_cross_validation(x_train, y_train)
-            results['random_model_losses'].append(avg_loss_random)
-            results['avg_random_sampling_f1_plot'].append(avg_f1_random)
+            if len(y_pool) > 0:
+                random_indices = np.random.choice(len(y_pool), size=target_train_size - initial_train_size, replace=False)
+                x_train_random = np.append(x_train, x_pool[random_indices], axis=0)
+                y_train_random = np.append(y_train, y_pool[random_indices])
+            else:
+                x_train_random, y_train_random = x_train, y_train
 
-            # Evaluate with weighted F1
-            weights_random = fit_and_plot_gmm_density(x_train, y_train, x_test, y_test)
-            accuracy_random, f1_random, precision_random, loss_random, y_prob_random = evaluate_model_on_test_set(classifier_random, x_test, y_test)
-            f1_random_weighted, _, _, _, _ = evaluate_model_on_test_set_weighted(classifier_random, x_test, y_test, weights_random)
-
+            avg_accuracy_random, avg_f1_random, avg_precision_random, avg_loss_random, classifier_random = evaluate_model_with_cross_validation(x_train_random, y_train_random)
+            random_f1_scores.append(avg_f1_random)
+            random_losses.append(avg_loss_random)
+            accuracy_random, f1_random, _, loss_random, y_prob_random = evaluate_model_on_test_set(classifier_random, x_test, y_test)
             results['random_test_sampling_f1'].append(f1_random)
-            results['random_test_sampling_f1_weighted'].append(f1_random_weighted)
-            results['random_test_sampling_f1_difference'].append(f1_random_weighted - f1_random)
 
-        results['train_sizes'].append(train_size)
-
-    # Aggregate results for each train size
-    aggregated_results = {
-        'train_sizes': results['train_sizes'],
-        'avg_active_test_model_f1': [np.mean(results['active_test_model_f1'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_active_test_model_f1_weighted': [np.mean(results['active_test_model_f1_weighted'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_active_test_model_f1_difference': [np.mean(results['active_test_model_f1_difference'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_random_test_sampling_f1': [np.mean(results['random_test_sampling_f1'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_random_test_sampling_f1_weighted': [np.mean(results['random_test_sampling_f1_weighted'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_random_test_sampling_f1_difference': [np.mean(results['random_test_sampling_f1_difference'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_active_model_f1_plot': [np.mean(results['avg_active_model_f1_plot'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_random_model_f1_plot': [np.mean(results['avg_random_sampling_f1_plot'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_active_model_losses': [np.mean(results['active_model_losses'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-        'avg_random_model_losses': [np.mean(results['random_model_losses'][i*NUM_EXPERIMENTS:(i+1)*NUM_EXPERIMENTS]) for i in range(len(TRAIN_SIZE_RANGE))],
-    }
-
-    # Print differences
-    print("Active Learning:")
-    for i, train_size in enumerate(aggregated_results['train_sizes']):
-        print(f"Train Size: {train_size}")
-        print(f"  Average Difference in F1 (Weighted - Regular): {aggregated_results['avg_active_test_model_f1_difference'][i]:.4f}")
-    
-    print("\nRandom Sampling:")
-    for i, train_size in enumerate(aggregated_results['train_sizes']):
-        print(f"Train Size: {train_size}")
-        print(f"  Average Difference in F1 (Weighted - Regular): {aggregated_results['avg_random_test_sampling_f1_difference'][i]:.4f}")
+        results['avg_active_model_f1_plot'].append(np.mean(active_f1_scores))
+        results['avg_random_sampling_f1_plot'].append(np.mean(random_f1_scores))
+        results['active_model_losses'].append(np.mean(active_losses))
+        results['random_model_losses'].append(np.mean(random_losses))
 
     # Plot results
-    plot_f1_scores(train_sizes=aggregated_results['train_sizes'],
-                   avg_active_model_f1_plot=aggregated_results['avg_active_model_f1_plot'],
-                   avg_random_sampling_f1_plot=aggregated_results['avg_random_model_f1_plot'],
-                   active_test_model_f1=aggregated_results['avg_active_test_model_f1'],
-                   random_test_sampling_f1=aggregated_results['avg_random_test_sampling_f1'])
+    plot_f1_scores(results['train_sizes'], results['avg_active_model_f1_plot'], results['avg_random_sampling_f1_plot'], results['active_test_model_f1'], results['random_test_sampling_f1'])
+    plot_losses(results['train_sizes'], results['active_model_losses'], results['random_model_losses'])
 
-    # Plot weighted F1 scores
-    plot_f1_scores(train_sizes=aggregated_results['train_sizes'],
-                   avg_active_model_f1_plot=aggregated_results['avg_active_model_f1_plot'],
-                   avg_random_sampling_f1_plot=aggregated_results['avg_random_model_f1_plot'],
-                   active_test_model_f1=aggregated_results['avg_active_test_model_f1_weighted'],
-                   random_test_sampling_f1=aggregated_results['avg_random_test_sampling_f1_weighted'])
+    # Fit Gaussian Mixture Model to calculate weights
+    weights = fit_and_plot_gmm_density(x_train, y_train, x_test, y_test)
 
-    plot_losses(train_sizes=aggregated_results['train_sizes'],
-                active_model_losses=aggregated_results['avg_active_model_losses'],
-                random_model_losses=aggregated_results['avg_random_model_losses'])
+    # Evaluate models with weighted F1 score on test set
+    _, f1_active_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, weights)
+    _, f1_random_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_random, x_test, y_test, weights)
 
-    # Plot ROC curve for the final model
+    # Compute ROC curves
     fpr_active, tpr_active, _ = roc_curve(y_test, y_prob_active[:, 1])
     roc_auc_active = auc(fpr_active, tpr_active)
+
     fpr_random, tpr_random, _ = roc_curve(y_test, y_prob_random[:, 1])
     roc_auc_random = auc(fpr_random, tpr_random)
-    plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random)
 
-    # Fit and plot GMM densities
-    fit_and_plot_gmm_density(x_train_active, y_train_active, unlabel, label)
+    # Plot ROC curves
+    plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random)
 
 if __name__ == "__main__":
     main()
