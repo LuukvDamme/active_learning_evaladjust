@@ -13,9 +13,9 @@ TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"
-TRAIN_SIZE_RANGE = np.arange(0.10, 0.90, 0.05)
-NUM_EXPERIMENTS = 1
-INITIAL_TRAIN_SIZE_PERCENTAGE = 0.05  # Initial training set size as a fraction of the dataset
+TRAIN_SIZE_RANGE = np.arange(0.02, 0.77, 0.05)
+NUM_EXPERIMENTS = 5
+INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01  # Initial training set size as a fraction of the dataset
 
 # Function to split the dataset into train, pool, test, and unlabelled sets
 def split_dataset_initial(dataset, train_size):
@@ -98,29 +98,36 @@ def evaluate_model_on_test_set_weighted(classifier, x_test, y_test, weights):
     y_prob = classifier.predict_proba(x_test)
     return accuracy, f1_weighted, precision_score(y_test, y_pred, average='weighted'), log_loss(y_test, y_prob), y_prob
 
-# Function to plot F1 scores
-def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1):
+# Function to plot F1 scores with the x-axis in percentages
+def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1):
+    train_sizes_percent = [size * 100 for size in train_sizes]
+    
     plt.figure()
-    plt.plot(train_sizes, avg_active_model_f1_plot, label="Active Learning train F1")
-    plt.plot(train_sizes, avg_random_sampling_f1_plot, label="Random Sampling train F1")
-    plt.plot(train_sizes, active_test_model_f1, label="Active Learning test F1")
-    plt.plot(train_sizes, random_test_sampling_f1, label="Random Sampling test F1")
-    plt.xlabel("Train Size")
+    plt.plot(train_sizes_percent, avg_active_model_f1_plot, label="Active Learning train F1")
+    plt.plot(train_sizes_percent, avg_random_sampling_f1_plot, label="Random Sampling train F1")
+    plt.plot(train_sizes_percent, active_test_model_f1, label="Active Learning test F1")
+    plt.plot(train_sizes_percent, random_test_sampling_f1, label="Random Sampling test F1")
+    plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning test F1", linestyle='--')
+    plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling test F1", linestyle='--')
+    plt.xlabel("Train Size (%)")
     plt.ylabel("F1 Score")
     plt.title("F1 Score vs Train Size")
     plt.legend()
     plt.show()
 
-# Function to plot losses
+# Function to plot losses with the x-axis in percentages
 def plot_losses(train_sizes, active_model_losses, random_model_losses):
+    train_sizes_percent = [size * 100 for size in train_sizes]
+    
     plt.figure()
-    plt.plot(train_sizes, active_model_losses, label="Active Learning train Loss")
-    plt.plot(train_sizes, random_model_losses, label="Random Sampling train Loss")
-    plt.xlabel("Train Size")
+    plt.plot(train_sizes_percent, active_model_losses, label="Active Learning train Loss")
+    plt.plot(train_sizes_percent, random_model_losses, label="Random Sampling train Loss")
+    plt.xlabel("Train Size (%)")
     plt.ylabel("Log Loss")
     plt.title("Log Loss vs Train Size")
     plt.legend()
     plt.show()
+
 
 # Function to plot ROC curves
 def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random):
@@ -181,20 +188,26 @@ def main():
         'avg_active_model_f1_plot': [],
         'avg_random_sampling_f1_plot': [],
         'active_model_losses': [],
-        'random_model_losses': []
+        'random_model_losses': [],
+        'weighted_active_f1': [],
+        'weighted_random_f1': []
     }
 
     initial_train_size = int(len(dataset) * INITIAL_TRAIN_SIZE_PERCENTAGE)
     total_data_size = len(dataset)
 
-    for target_train_size in TRAIN_SIZE_RANGE:
-        target_train_size = int(len(dataset) * target_train_size)
-        results['train_sizes'].append(target_train_size)
+    for target_train_size_fraction in TRAIN_SIZE_RANGE:
+        target_train_size = int(len(dataset) * target_train_size_fraction)
+        results['train_sizes'].append(target_train_size_fraction)
 
         active_f1_scores = []
         random_f1_scores = []
         active_losses = []
         random_losses = []
+        active_test_f1_scores = []
+        random_test_f1_scores = []
+        weighted_active_f1_scores = []
+        weighted_random_f1_scores = []
 
         for experiment in range(NUM_EXPERIMENTS):
             # Split the dataset into the initial training and pool sets
@@ -207,7 +220,7 @@ def main():
             active_f1_scores.append(avg_f1_active)
             active_losses.append(avg_loss_active)
             accuracy_active, f1_active, _, loss_active, y_prob_active = evaluate_model_on_test_set(classifier_active, x_test, y_test)
-            results['active_test_model_f1'].append(f1_active)
+            active_test_f1_scores.append(f1_active)
 
             # Random Sampling
             if len(y_pool) > 0:
@@ -221,23 +234,30 @@ def main():
             random_f1_scores.append(avg_f1_random)
             random_losses.append(avg_loss_random)
             accuracy_random, f1_random, _, loss_random, y_prob_random = evaluate_model_on_test_set(classifier_random, x_test, y_test)
-            results['random_test_sampling_f1'].append(f1_random)
+            random_test_f1_scores.append(f1_random)
+
+            # Fit Gaussian Mixture Model to calculate weights
+            weights = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
+
+            # Evaluate models with weighted F1 score on test set
+            _, f1_active_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, weights)
+            _, f1_random_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_random, x_test, y_test, weights)
+
+            weighted_active_f1_scores.append(f1_active_weighted)
+            weighted_random_f1_scores.append(f1_random_weighted)
 
         results['avg_active_model_f1_plot'].append(np.mean(active_f1_scores))
         results['avg_random_sampling_f1_plot'].append(np.mean(random_f1_scores))
         results['active_model_losses'].append(np.mean(active_losses))
         results['random_model_losses'].append(np.mean(random_losses))
+        results['active_test_model_f1'].append(np.mean(active_test_f1_scores))
+        results['random_test_sampling_f1'].append(np.mean(random_test_f1_scores))
+        results['weighted_active_f1'].append(np.mean(weighted_active_f1_scores))
+        results['weighted_random_f1'].append(np.mean(weighted_random_f1_scores))
 
     # Plot results
-    plot_f1_scores(results['train_sizes'], results['avg_active_model_f1_plot'], results['avg_random_sampling_f1_plot'], results['active_test_model_f1'], results['random_test_sampling_f1'])
+    plot_f1_scores(results['train_sizes'], results['avg_active_model_f1_plot'], results['avg_random_sampling_f1_plot'], results['active_test_model_f1'], results['random_test_sampling_f1'], results['weighted_active_f1'], results['weighted_random_f1'])
     plot_losses(results['train_sizes'], results['active_model_losses'], results['random_model_losses'])
-
-    # Fit Gaussian Mixture Model to calculate weights
-    weights = fit_and_plot_gmm_density(x_train, y_train, x_test, y_test)
-
-    # Evaluate models with weighted F1 score on test set
-    _, f1_active_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, weights)
-    _, f1_random_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_random, x_test, y_test, weights)
 
     # Compute ROC curves
     fpr_active, tpr_active, _ = roc_curve(y_test, y_prob_active[:, 1])
