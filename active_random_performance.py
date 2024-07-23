@@ -13,8 +13,8 @@ TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
 ACTIVE_LEARNING_ROUNDS = 10  # The number of rounds of active learning
 N_SPLITS = 10  # Number of splits for cross-validation
 DATA_URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data"
-TRAIN_SIZE_RANGE = np.arange(0.02, 0.77, 0.05)
-NUM_EXPERIMENTS = 5
+TRAIN_SIZE_RANGE = np.arange(0.02, 0.75, 0.01)
+NUM_EXPERIMENTS = 1
 INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01  # Initial training set size as a fraction of the dataset
 
 # Function to split the dataset into train, pool, test, and unlabelled sets
@@ -98,43 +98,67 @@ def evaluate_model_on_test_set_weighted(classifier, x_test, y_test, weights):
     y_prob = classifier.predict_proba(x_test)
     return accuracy, f1_weighted, precision_score(y_test, y_pred, average='weighted'), log_loss(y_test, y_prob), y_prob
 
-# Function to plot F1 scores with the x-axis in percentages
 def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1):
-    train_sizes_percent = [size * 100 for size in train_sizes]
-    
     plt.figure()
-    plt.plot(train_sizes_percent, avg_active_model_f1_plot, label="Active Learning train F1")
-    plt.plot(train_sizes_percent, avg_random_sampling_f1_plot, label="Random Sampling train F1")
-    plt.plot(train_sizes_percent, active_test_model_f1, label="Active Learning test F1")
-    plt.plot(train_sizes_percent, random_test_sampling_f1, label="Random Sampling test F1")
-    plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning test F1", linestyle='--')
-    plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling test F1", linestyle='--')
+
+    train_sizes_percent = np.array(train_sizes) * 100
+
+    # Define a set of distinct colors
+    colors = {
+        "Active Learning CV": "#1f77b4",       # Blue
+        "Random Sampling CV": "#8c564b",  # Brown
+        "Active Learning test": "#2ca02c",     # Green
+        "Random Sampling test": "#d62728",     # Red
+        "Weighted Active Learning": "#9467bd", # Purple
+        "Weighted Random Sampling": "#ff7f0e"       # Orange
+    }
+
+    plt.plot(train_sizes_percent, avg_active_model_f1_plot, label="Active Learning CV", color=colors["Active Learning CV"])
+    plt.plot(train_sizes_percent, avg_random_sampling_f1_plot, label="Random Sampling CV", color=colors["Random Sampling CV"])
+    plt.plot(train_sizes_percent, active_test_model_f1, label="Active Learning test", color=colors["Active Learning test"])
+    plt.plot(train_sizes_percent, random_test_sampling_f1, label="Random Sampling test", color=colors["Random Sampling test"])
+    plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning", color=colors["Weighted Active Learning"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling", color=colors["Weighted Random Sampling"], linestyle='--')
+    
     plt.xlabel("Train Size (%)")
     plt.ylabel("F1 Score")
     plt.title("F1 Score vs Train Size")
     plt.legend()
     plt.show()
 
-# Function to plot losses with the x-axis in percentages
 def plot_losses(train_sizes, active_model_losses, random_model_losses):
     train_sizes_percent = [size * 100 for size in train_sizes]
-    
+
     plt.figure()
-    plt.plot(train_sizes_percent, active_model_losses, label="Active Learning train Loss")
-    plt.plot(train_sizes_percent, random_model_losses, label="Random Sampling train Loss")
+
+    # Define a set of distinct colors
+    colors = {
+        "Active Learning train Loss": "#1f77b4",  # Blue
+        "Random Sampling train Loss": "#ff7f0e"   # Orange
+    }
+
+    plt.plot(train_sizes_percent, active_model_losses, label="Active Learning train Loss", color=colors["Active Learning train Loss"])
+    plt.plot(train_sizes_percent, random_model_losses, label="Random Sampling train Loss", color=colors["Random Sampling train Loss"])
+    
     plt.xlabel("Train Size (%)")
     plt.ylabel("Log Loss")
     plt.title("Log Loss vs Train Size")
     plt.legend()
     plt.show()
 
-
-# Function to plot ROC curves
 def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random):
     plt.figure()
-    plt.plot(fpr_active, tpr_active, color='darkorange', lw=2, label=f'Active Learning ROC curve (area = {roc_auc_active:.2f})')
-    plt.plot(fpr_random, tpr_random, color='blue', lw=2, label=f'Random Sampling ROC curve (area = {roc_auc_random:.2f})')
+
+    # Define a set of distinct colors
+    colors = {
+        "Active Learning ROC curve": "#1f77b4",   # Blue
+        "Random Sampling ROC curve": "#ff7f0e"    # Orange
+    }
+
+    plt.plot(fpr_active, tpr_active, color=colors["Active Learning ROC curve"], lw=2, label=f'Active Learning ROC curve (area = {roc_auc_active:.2f})')
+    plt.plot(fpr_random, tpr_random, color=colors["Random Sampling ROC curve"], lw=2, label=f'Random Sampling ROC curve (area = {roc_auc_random:.2f})')
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
@@ -142,6 +166,7 @@ def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_rando
     plt.title('Receiver Operating Characteristic (ROC) Curve')
     plt.legend(loc="lower right")
     plt.show()
+
 
 # Function to fit Gaussian Mixture Model and calculate weights
 def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
