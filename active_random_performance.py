@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import f1_score, precision_score, log_loss, roc_curve, auc
 import matplotlib.pyplot as plt
 from sklearn.mixture import GaussianMixture
+from matplotlib.patches import Ellipse
 
 # Constants
 TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
@@ -98,6 +99,7 @@ def evaluate_model_on_test_set_weighted(classifier, x_test, y_test, weights):
     y_prob = classifier.predict_proba(x_test)
     return accuracy, f1_weighted, precision_score(y_test, y_pred, average='weighted'), log_loss(y_test, y_prob), y_prob
 
+# Function to plot F1 scores
 def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1):
     plt.figure()
 
@@ -126,6 +128,7 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
     plt.legend()
     plt.show()
 
+# Function to plot Log Loss
 def plot_losses(train_sizes, active_model_losses, random_model_losses):
     train_sizes_percent = [size * 100 for size in train_sizes]
 
@@ -146,6 +149,7 @@ def plot_losses(train_sizes, active_model_losses, random_model_losses):
     plt.legend()
     plt.show()
 
+# Function to plot ROC Curve
 def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random):
     plt.figure()
 
@@ -167,7 +171,6 @@ def plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_rando
     plt.legend(loc="lower right")
     plt.show()
 
-
 # Function to fit Gaussian Mixture Model and calculate weights
 def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
     # Fit a Gaussian Mixture Model to the train data
@@ -187,7 +190,24 @@ def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
     # Calculate weights using densities (importance sampling)
     weights = np.exp(densities_test - densities_train.mean())  # Adjust as necessary for your specific case
     
-    return weights
+    return weights, gmm_train, gmm_test
+
+# Function to plot Gaussian Mixture Model ellipsoids
+def plot_gmm_ellipsoids(gmm, X, ax, label):
+    colors = ['red', 'blue']  # Adjust the colors based on the number of components
+    for i, (mean, covar) in enumerate(zip(gmm.means_, gmm.covariances_)):
+        v, w = np.linalg.eigh(covar)
+        v = 2.0 * np.sqrt(2.0) * np.sqrt(v)
+        u = w[0] / np.linalg.norm(w[0])
+        
+        ell = Ellipse(xy=mean, width=v[0], height=v[1],
+                      angle=np.degrees(np.arctan2(u[1], u[0])),
+                      color=colors[i], alpha=0.5, label=f'{label} Component {i+1}')
+        ax.add_patch(ell)
+    
+    ax.scatter(X[:, 0], X[:, 1], s=10, color='black', label='Data')
+    ax.set_title(f'GMM Ellipsoids - {label}')
+    ax.legend()
 
 def main():
     # Load and preprocess the dataset
@@ -202,6 +222,7 @@ def main():
     scaler = StandardScaler()
     dataset[:, :-1] = scaler.fit_transform(dataset[:, :-1])
 
+    print(dataset.shape)
     # Split the dataset into unlabel, label, x_test, and y_test sets
     x_pool, y_pool = dataset[:, :-1], dataset[:, -1]
     unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
@@ -262,7 +283,7 @@ def main():
             random_test_f1_scores.append(f1_random)
 
             # Fit Gaussian Mixture Model to calculate weights
-            weights = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
+            weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
 
             # Evaluate models with weighted F1 score on test set
             _, f1_active_weighted, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, weights)
@@ -293,6 +314,12 @@ def main():
 
     # Plot ROC curves
     plot_roc_curve(fpr_active, tpr_active, roc_auc_active, fpr_random, tpr_random, roc_auc_random)
+
+    # Plot GMM Ellipsoids
+    fig, ax = plt.subplots(1, 2, figsize=(14, 7))
+    plot_gmm_ellipsoids(gmm_train_active, x_train_active, ax[0], 'Active Learning')
+    plot_gmm_ellipsoids(gmm_test_active, x_test, ax[1], 'Test Set')
+    plt.show()
 
 if __name__ == "__main__":
     main()
