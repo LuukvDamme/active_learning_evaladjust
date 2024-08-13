@@ -226,6 +226,32 @@ def plot_gmm_ellipsoids(gmm, X, ax, label):
     ax.legend()
 
 
+def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv_accuracy, active_test_accuracy, random_test_accuracy):
+    plt.figure()
+
+    train_sizes_percent = np.array(train_sizes) * 100
+
+    # Define a set of distinct colors
+    colors = {
+        "Active Learning CV": "#1f77b4",       # Blue
+        "Random Sampling CV": "#8c564b",  # Brown
+        "Active Learning test": "#2ca02c",     # Green
+        "Random Sampling test": "#d62728"      # Red
+    }
+
+    plt.plot(train_sizes_percent, active_learning_cv_accuracy, label="Active Learning CV", color=colors["Active Learning CV"])
+    plt.plot(train_sizes_percent, random_sampling_cv_accuracy, label="Random Sampling CV", color=colors["Random Sampling CV"])
+    plt.plot(train_sizes_percent, active_test_accuracy, label="Active Learning test", color=colors["Active Learning test"])
+    plt.plot(train_sizes_percent, random_test_accuracy, label="Random Sampling test", color=colors["Random Sampling test"])
+    
+    plt.xlabel("Train Size (%)")
+    plt.ylabel("Accuracy")
+    plt.title("Accuracy vs. Train Size")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
 def main():
     # Ensure NLTK data is available
     nltk.download('punkt')
@@ -243,6 +269,12 @@ def main():
     random_test_sampling_f1 = []
     weighted_active_f1 = []
     weighted_random_f1 = []
+    
+    # New accuracy lists
+    avg_active_model_accuracy_plot = []
+    avg_random_sampling_accuracy_plot = []
+    active_test_model_accuracy = []
+    random_test_sampling_accuracy = []
 
     x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size)
     unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
@@ -257,12 +289,14 @@ def main():
             x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
 
         # Evaluate active learning model
-        _, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
+        avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
         avg_active_model_f1_plot.append(active_f1)
+        avg_active_model_accuracy_plot.append(avg_accuracy)
 
         classifier_active = train_model(x_train_active, y_train_active)
-        _, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
+        test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
         active_test_model_f1.append(active_test_f1)
+        active_test_model_accuracy.append(test_accuracy)
 
         # Compute weighted F1 for active learning
         _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
@@ -274,12 +308,14 @@ def main():
         y_rand_train = np.concatenate((y_train, label[rand_indices]))
 
         # Evaluate random sampling model
-        _, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
+        avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
         avg_random_sampling_f1_plot.append(rand_f1)
+        avg_random_sampling_accuracy_plot.append(avg_accuracy)
 
         classifier_rand = train_model(x_rand_train, y_rand_train)
-        _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
+        test_accuracy, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
         random_test_sampling_f1.append(random_test_f1)
+        random_test_sampling_accuracy.append(test_accuracy)
 
         # Compute weighted F1 for random sampling
         _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
@@ -292,6 +328,9 @@ def main():
 
     # Plot F1 Scores
     plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1)
+
+    # Plot Accuracies
+    plot_accuracies(train_sizes, avg_active_model_accuracy_plot, avg_random_sampling_accuracy_plot, active_test_model_accuracy, random_test_sampling_accuracy)
 
     # Plot ROC Curve
     plt.figure()
@@ -314,7 +353,6 @@ def main():
     plt.legend()
     plt.grid(True)
     plt.show()
-
 
     # Plot GMM Ellipsoids
     fig, ax = plt.subplots(1, 2, figsize=(14, 7))
