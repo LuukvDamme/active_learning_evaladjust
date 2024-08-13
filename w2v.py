@@ -5,11 +5,13 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, StratifiedKFold
-from sklearn.metrics import f1_score, precision_score, log_loss, roc_curve, auc
+from sklearn.metrics import f1_score, precision_score, log_loss, roc_curve, auc, precision_recall_curve
+from sklearn.mixture import GaussianMixture
 import matplotlib.pyplot as plt
 from gensim.models import Word2Vec
 from nltk.tokenize import word_tokenize
 import nltk
+from matplotlib.patches import Ellipse
 
 # Constants
 DATA_FILE = 'SMSSpamCollection'
@@ -21,7 +23,7 @@ N_SPLITS = 10
 TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
 
 def load_sms_spam_collection(file_path):
-    df = pd.read_csv(file_path, delimiter='\t', header=None, names=['label', 'message'])
+    df = pd.read_csv(file_path, delimiter='\t', header=None, names=['label', 'message'], encoding='utf-8')
     return df
 
 def preprocess_text(text):
@@ -134,6 +136,27 @@ def evaluate_model_on_test_set_weighted(classifier, x_test, y_test, weights):
         y_prob,
     )
 
+# Function to compute GMM-based weights on the test set
+def compute_gmm_weights(x_test, y_test):
+    gmm = GaussianMixture(n_components=2, random_state=42)
+    gmm.fit(x_test)
+    probs = gmm.predict_proba(x_test)
+    weights = np.zeros_like(y_test, dtype=float)
+    weights[y_test == 1] = probs[y_test == 1, 1]  # Weight for spam
+    weights[y_test == 0] = probs[y_test == 0, 0]  # Weight for ham
+    return weights
+
+# Function to plot ROC curve
+def plot_roc_curve(y_true, y_probs, label):
+    fpr, tpr, _ = roc_curve(y_true, y_probs)
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, label=f'{label} (AUC = {roc_auc:.2f})')
+
+# Function to plot Precision-Recall curve
+def plot_precision_recall_curve(y_true, y_probs, label):
+    precision, recall, _ = precision_recall_curve(y_true, y_probs)
+    plt.plot(recall, precision, label=f'{label} (PR Curve)')
+
 def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1):
     plt.figure()
 
@@ -163,6 +186,46 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
     plt.grid(True)
     plt.show()
 
+# Function to fit Gaussian Mixture Model and calculate weights
+def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
+    # Fit a Gaussian Mixture Model to the train data
+    gmm_train = GaussianMixture(n_components=n_components, random_state=42)
+    gmm_train.fit(x_train)
+    
+    # Predict the density for each point in the train set
+    densities_train = gmm_train.score_samples(x_train)
+    
+    # Fit a Gaussian Mixture Model to the test data
+    gmm_test = GaussianMixture(n_components=n_components, random_state=42)
+    gmm_test.fit(x_test)
+    
+    # Predict the density for each point in the test set
+    densities_test = gmm_test.score_samples(x_test)
+    
+    # Calculate weights using densities (importance sampling)
+    weights = np.exp(densities_test - densities_train.mean())  # Adjust as necessary for your specific case
+    
+    return weights, gmm_train, gmm_test
+
+
+# Function to plot Gaussian Mixture Model ellipsoids
+def plot_gmm_ellipsoids(gmm, X, ax, label):
+    colors = ['red', 'blue']  # Adjust the colors based on the number of components
+    for i, (mean, covar) in enumerate(zip(gmm.means_, gmm.covariances_)):
+        v, w = np.linalg.eigh(covar)
+        v = 2.0 * np.sqrt(2.0) * np.sqrt(v)
+        u = w[0] / np.linalg.norm(w[0])
+        
+        ell = Ellipse(xy=mean, width=v[0], height=v[1],
+                      angle=np.degrees(np.arctan2(u[1], u[0])),
+                      color=colors[i], alpha=0.5, label=f'{label} Component {i+1}')
+        ax.add_patch(ell)
+    
+    ax.scatter(X[:, 0], X[:, 1], s=10, color='black', label='Data')
+    ax.set_title(f'GMM Ellipsoids - {label}')
+    ax.legend()
+
+
 def main():
     # Ensure NLTK data is available
     nltk.download('punkt')
@@ -184,28 +247,33 @@ def main():
     x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size)
     unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
 
+    # Compute GMM-based weights for the test set
+    test_weights = compute_gmm_weights(x_test, y_test)
+
     for train_size_percentage in TRAIN_SIZE_RANGE:
         train_size = int(train_size_percentage * total_data_size)
 
         x_train_active, y_train_active, unlabel_active, label_active = active_learning(
             x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
 
+        # Evaluate active learning model
         _, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
         avg_active_model_f1_plot.append(active_f1)
 
         classifier_active = train_model(x_train_active, y_train_active)
-        _, active_test_f1, _, _, y_prob = evaluate_model_on_test_set(classifier_active, x_test, y_test)
+        _, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
         active_test_model_f1.append(active_test_f1)
 
-        y_test_weighted = np.where(y_test == 1, 1, np.sum(y_test == 1) / np.sum(y_test == 0))
-        weighted_f1 = f1_score(y_test, classifier_active.predict(x_test), average='weighted', zero_division=1, sample_weight=y_test_weighted)
-        weighted_active_f1.append(weighted_f1)
+        # Compute weighted F1 for active learning
+        _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
+        weighted_active_f1.append(weighted_f1_active)
 
         # Random sampling for comparison
         rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
         x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
         y_rand_train = np.concatenate((y_train, label[rand_indices]))
 
+        # Evaluate random sampling model
         _, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
         avg_random_sampling_f1_plot.append(rand_f1)
 
@@ -213,12 +281,46 @@ def main():
         _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
         random_test_sampling_f1.append(random_test_f1)
 
-        weighted_f1_rand = f1_score(y_test, classifier_rand.predict(x_test), average='weighted', zero_division=1, sample_weight=y_test_weighted)
+        # Compute weighted F1 for random sampling
+        _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
         weighted_random_f1.append(weighted_f1_rand)
 
         train_sizes.append(train_size_percentage)
 
+        # Fit Gaussian Mixture Model to calculate weights
+        weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
+
+    # Plot F1 Scores
     plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1)
+
+    # Plot ROC Curve
+    plt.figure()
+    plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+    plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    # Plot Precision-Recall Curve
+    plt.figure()
+    plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+    plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision-Recall Curve")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+    # Plot GMM Ellipsoids
+    fig, ax = plt.subplots(1, 2, figsize=(14, 7))
+    plot_gmm_ellipsoids(gmm_train_active, x_train_active, ax[0], 'Active Learning')
+    plot_gmm_ellipsoids(gmm_test_active, x_test, ax[1], 'Test Set')
+    plt.show()
 
 if __name__ == "__main__":
     main()
