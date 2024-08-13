@@ -83,9 +83,18 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
         label = np.delete(label, uncertain_indices)
         rounds += 1
         current_train_percentage = (len(y_train) / total_data_size) * 100
+
+        # Calculate and print the ratio of each label
+        spam_count = np.sum(y_train == 1)
+        ham_count = np.sum(y_train == 0)
+        spam_ratio = spam_count / len(y_train) * 100
+        ham_ratio = ham_count / len(y_train) * 100
+
         print(f"Round {rounds}: Added {len(uncertain_indices)} samples, total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
+        print(f"Label ratios - Spam: {spam_ratio:.2f}%, Ham: {ham_ratio:.2f}%")
 
     return x_train, y_train, unlabel, label
+
 
 # Function to evaluate the model with cross-validation
 def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
@@ -258,6 +267,18 @@ def main():
 
     # Load and preprocess the dataset
     dataset = preprocess_and_vectorize(DATA_FILE)
+
+    # # Load and preprocess the dataset
+    # df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
+    # dataset = df.values
+
+    # Impute missing values with the mean of each column
+    imputer = SimpleImputer(strategy="mean")
+    dataset = imputer.fit_transform(dataset)
+
+    # Standardize the dataset
+    scaler = StandardScaler()
+    dataset[:, :-1] = scaler.fit_transform(dataset[:, :-1])
 
     total_data_size = len(dataset)
     initial_train_size = int(INITIAL_TRAIN_SIZE_PERCENTAGE * total_data_size)
