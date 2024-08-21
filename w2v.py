@@ -63,6 +63,10 @@ def train_model(x_train, y_train):
 # Function to perform active learning
 def active_learning(x_train, y_train, unlabel, label, target_train_size, total_data_size):
     rounds = 0
+    if len(y_train) < target_train_size:
+        print('smaller')
+    else:
+        print('larger')
     while len(y_train) < target_train_size and rounds < ACTIVE_LEARNING_ROUNDS:
         classifier = train_model(x_train, y_train)
 
@@ -262,15 +266,15 @@ def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv
 
 
 def main():
-    # Ensure NLTK data is available
-    nltk.download('punkt')
-
-    # Load and preprocess the dataset
-    dataset = preprocess_and_vectorize(DATA_FILE)
+    # # Ensure NLTK data is available
+    # nltk.download('punkt')
 
     # # Load and preprocess the dataset
-    # df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
-    # dataset = df.values
+    # dataset = preprocess_and_vectorize(DATA_FILE)
+
+    # Load and preprocess the dataset
+    df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
+    dataset = df.values
 
     # Impute missing values with the mean of each column
     imputer = SimpleImputer(strategy="mean")
@@ -290,7 +294,7 @@ def main():
     random_test_sampling_f1 = []
     weighted_active_f1 = []
     weighted_random_f1 = []
-    
+
     # New accuracy lists
     avg_active_model_accuracy_plot = []
     avg_random_sampling_accuracy_plot = []
@@ -302,6 +306,11 @@ def main():
 
     # Compute GMM-based weights for the test set
     test_weights = compute_gmm_weights(x_test, y_test)
+
+    num_plots = int(1 / 0.1) + 1  # Number of plots (10% increments + final plot)
+    fig, axes = plt.subplots(num_plots, 2, figsize=(14, 7 * num_plots))
+
+    plot_index = 0
 
     for train_size_percentage in TRAIN_SIZE_RANGE:
         train_size = int(train_size_percentage * total_data_size)
@@ -347,6 +356,19 @@ def main():
         # Fit Gaussian Mixture Model to calculate weights
         weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
 
+        # Store GMM plots every 10% of the training data
+        if train_size_percentage * 100 % 10 == 0:
+            plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning ({train_size_percentage*100:.0f}%)')
+            plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set')
+            plot_index += 1
+
+    # Plot the final state
+    plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning (Final)')
+    plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set (Final)')
+
+    plt.tight_layout()
+    plt.show()
+
     # Plot F1 Scores
     plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1)
 
@@ -373,12 +395,6 @@ def main():
     plt.title("Precision-Recall Curve")
     plt.legend()
     plt.grid(True)
-    plt.show()
-
-    # Plot GMM Ellipsoids
-    fig, ax = plt.subplots(1, 2, figsize=(14, 7))
-    plot_gmm_ellipsoids(gmm_train_active, x_train_active, ax[0], 'Active Learning')
-    plot_gmm_ellipsoids(gmm_test_active, x_test, ax[1], 'Test Set')
     plt.show()
 
 if __name__ == "__main__":
