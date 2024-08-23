@@ -194,7 +194,7 @@ def plot_precision_recall_curve(y_true, y_probs, label):
     precision, recall, _ = precision_recall_curve(y_true, y_probs)
     plt.plot(recall, precision, label=f'{label} (PR Curve)')
 
-def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1):
+def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1, weighted_f1_train_active, weighted_f1_train_random):
     plt.figure()
 
     train_sizes_percent = np.array(train_sizes) * 100
@@ -205,22 +205,27 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
         "Random Sampling CV": "#8c564b",  # Brown
         "Active Learning test": "#2ca02c",     # Green
         "Random Sampling test": "#d62728",     # Red
-        "Weighted Active Learning": "#9467bd", # Purple
-        "Weighted Random Sampling": "#ff7f0e"       # Orange
+        "Weighted Active Learning test": "#2ca02c", # green
+        "Weighted Random Sampling test": "#d62728",       # red
+        "Weighted Active Learning train": "#1f77b4", # blue
+        "Weighted Random Sampling train": "#8c564b"       # brown
     }
 
     plt.plot(train_sizes_percent, avg_active_model_f1_plot, label="Active Learning CV", color=colors["Active Learning CV"])
     plt.plot(train_sizes_percent, avg_random_sampling_f1_plot, label="Random Sampling CV", color=colors["Random Sampling CV"])
     plt.plot(train_sizes_percent, active_test_model_f1, label="Active Learning test", color=colors["Active Learning test"])
     plt.plot(train_sizes_percent, random_test_sampling_f1, label="Random Sampling test", color=colors["Random Sampling test"])
-    plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning", color=colors["Weighted Active Learning"], linestyle='--')
-    plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling", color=colors["Weighted Random Sampling"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_f1_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_f1_train_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
     
     plt.xlabel("Train Size (%)")
     plt.ylabel("F1 Score")
     plt.title("F1 Score vs. Train Size")
     plt.legend()
     plt.grid(True)
+    #plt.xlim(left=10)
     plt.show()
 
 # Function to fit Gaussian Mixture Model and calculate weights
@@ -286,6 +291,8 @@ def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv
     plt.title("Accuracy vs. Train Size")
     plt.legend()
     plt.grid(True)
+
+
     plt.show()
 
 
@@ -405,7 +412,7 @@ def main():
     plt.show()
 
     # Plot F1 Scores
-    plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1)
+    plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1, weighted_f1_train_active, weighted_f1_train_random)
 
     # Plot Accuracies
     plot_accuracies(train_sizes, avg_active_model_accuracy_plot, avg_random_sampling_accuracy_plot, active_test_model_accuracy, random_test_sampling_accuracy)
