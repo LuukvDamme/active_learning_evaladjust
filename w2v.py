@@ -16,7 +16,7 @@ from matplotlib.patches import Ellipse
 # Constants
 DATA_FILE = 'SMSSpamCollection'
 INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01
-TRAIN_SIZE_RANGE = np.arange(0.02, 0.75, 0.01)
+TRAIN_SIZE_RANGE = np.arange(0.02, 0.74, 0.01)
 NUM_EXPERIMENTS = 100
 ACTIVE_LEARNING_ROUNDS = 10
 N_SPLITS = 10
@@ -297,6 +297,13 @@ def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv
 
 
 def main():
+
+    # # Ensure NLTK data is available
+    # nltk.download('punkt')
+
+    # # Load and preprocess the dataset
+    # dataset = preprocess_and_vectorize(DATA_FILE)
+
     # Load and preprocess the dataset
     df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
     dataset = df.values
@@ -331,11 +338,25 @@ def main():
     x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size)
     unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
 
-    # Compute GMM-based weights for the training set
-    train_weights = compute_gmm_weights_for_train(x_train, y_train)
+    print(f"x_train shape: {x_train.shape}")
+    print(f"x_train shape: {y_train.shape}")
+    print("#####################")
+    print(f"x_train shape: {x_pool.shape}")
+    print(f"x_train shape: {y_pool.shape}")
+    print("#####################")
+    print(f"x_train shape: {unlabel.shape}")
+    print(f"x_train shape: {label.shape}")
+    print("#####################")
+    print(f"x_train shape: {x_test.shape}")
+    print(f"x_train shape: {y_test.shape}")
+    print("#####################")
+
+    # # Compute GMM-based weights for the training set
+    # train_weights = compute_gmm_weights_for_train(x_train, y_train)
 
     # Compute GMM-based weights for the test set
     test_weights = compute_gmm_weights(x_test, y_test)
+    train_weights = compute_gmm_weights_for_train(unlabel, label)
 
     num_plots = int(1 / 0.1) + 1
     fig, axes = plt.subplots(num_plots, 2, figsize=(14, 7 * num_plots))
@@ -343,67 +364,89 @@ def main():
     plot_index = 0
 
     for train_size_percentage in TRAIN_SIZE_RANGE:
-        train_size = int(train_size_percentage * total_data_size)
+        try:
 
-        x_train_active, y_train_active, unlabel_active, label_active = active_learning(
-            x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
+    
+            train_size = int(train_size_percentage * total_data_size)
 
-        # Compute weights for the active learning training set
-        train_weights_active = compute_gmm_weights_for_train(x_train_active, y_train_active)
+            x_train_active, y_train_active, unlabel_active, label_active = active_learning(
+                x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
 
-        # Evaluate active learning model with weights
-        avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
-        avg_active_model_f1_plot.append(active_f1)
-        avg_active_model_accuracy_plot.append(avg_accuracy)
+            # Compute weights for the active learning training set
+            #weights op totaal train set
 
-        classifier_active = train_model(x_train_active, y_train_active)
-        test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
-        active_test_model_f1.append(active_test_f1)
-        active_test_model_accuracy.append(test_accuracy)
+            # print(f"x_train shape: {x_train.shape}")
+            # print(f"x_train_active shape: {x_train_active.shape}")
 
-        # Compute weighted F1 for active learning
-        _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
-        weighted_active_f1.append(weighted_f1_active)
+            train_weights_active = train_weights[:len(y_train_active)]
+            
 
-        # Compute weighted F1 for the training set
-        train_accuracy, _, _, _, _ = evaluate_model_on_train_set_weighted(classifier_active, x_train_active, y_train_active, train_weights_active)
-        weighted_f1_train_active.append(train_accuracy)
+            # train_weights_active = compute_gmm_weights_for_train(x_train_active, y_train_active)
+            
 
-        # Random sampling for comparison
-        rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
-        x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
-        y_rand_train = np.concatenate((y_train, label[rand_indices]))
+            # Evaluate active learning model with weights
+            avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
+            avg_active_model_f1_plot.append(active_f1)
+            avg_active_model_accuracy_plot.append(avg_accuracy)
 
-        # Compute weights for the random sampling training set
-        train_weights_rand = compute_gmm_weights_for_train(x_rand_train, y_rand_train)
+            classifier_active = train_model(x_train_active, y_train_active)
+            test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
+            active_test_model_f1.append(active_test_f1)
+            active_test_model_accuracy.append(test_accuracy)
 
-        # Evaluate random sampling model with weights
-        avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
-        avg_random_sampling_f1_plot.append(rand_f1)
-        avg_random_sampling_accuracy_plot.append(avg_accuracy)
+            # Compute weighted F1 for active learning
+            _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
+            weighted_active_f1.append(weighted_f1_active)
 
-        classifier_rand = train_model(x_rand_train, y_rand_train)
-        test_accuracy, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
-        random_test_sampling_f1.append(random_test_f1)
-        random_test_sampling_accuracy.append(test_accuracy)
+            # Compute weighted F1 for the training set
+            train_accuracy, _, _, _, _ = evaluate_model_on_train_set_weighted(classifier_active, x_train_active, y_train_active, train_weights_active)
+            weighted_f1_train_active.append(train_accuracy)
 
-        # Compute weighted F1 for random sampling
-        _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
-        weighted_random_f1.append(weighted_f1_rand)
+            # Random sampling for comparison
+            rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
+            x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
+            y_rand_train = np.concatenate((y_train, label[rand_indices]))
 
-        # Compute weighted F1 for the random sampling training set
-        train_accuracy_rand, _, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, train_weights_rand)
-        weighted_f1_train_random.append(train_accuracy_rand)
 
-        train_sizes.append(train_size_percentage)
+            # Evaluate random sampling model with weights
+            avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
+            avg_random_sampling_f1_plot.append(rand_f1)
+            avg_random_sampling_accuracy_plot.append(avg_accuracy)
 
-        # Fit Gaussian Mixture Model to calculate densities and plot
-        weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
+            classifier_rand = train_model(x_rand_train, y_rand_train)
+            test_accuracy, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
+            random_test_sampling_f1.append(random_test_f1)
+            random_test_sampling_accuracy.append(test_accuracy)
 
-        if train_size_percentage * 100 % 10 == 0:
-            plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning ({train_size_percentage*100:.0f}%)')
-            plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set')
-            plot_index += 1
+            # Compute weighted F1 for random sampling
+            _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
+            weighted_random_f1.append(weighted_f1_rand)
+
+            #IT SEEMS THE RANDOM SET IS 1% AHEAD
+            train_weights_rand = train_weights[:len(y_rand_train)]
+
+            print(f"  x_rand_train size: {len(x_rand_train)}")
+            print(f"  y_rand_train size: {len(y_rand_train)}")
+            print(f"  Unlabel size: {len(unlabel)}")
+            print(f"  Rand indices size: {len(rand_indices)}")
+
+            # Compute weighted F1 for the random sampling training set
+            train_accuracy_rand, _, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, train_weights_rand)
+            weighted_f1_train_random.append(train_accuracy_rand)
+
+            train_sizes.append(train_size_percentage)
+
+            # Fit Gaussian Mixture Model to calculate densities and plot
+            weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
+
+            if train_size_percentage * 100 % 10 == 0:
+                plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning ({train_size_percentage*100:.0f}%)')
+                plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set')
+                plot_index += 1
+
+        except Exception as e:
+            print(f"An error occurred during processing for train size {train_size_percentage*100:.2f}%: {e}")
+            continue
 
     plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning (Final)')
     plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set (Final)')
