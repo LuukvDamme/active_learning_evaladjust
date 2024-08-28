@@ -12,14 +12,14 @@ from gensim.models import Word2Vec
 from nltk.tokenize import word_tokenize
 import nltk
 from matplotlib.patches import Ellipse
+from scipy.interpolate import make_interp_spline
 
 # Constants
 DATA_FILE = 'SMSSpamCollection'
 INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01
 TRAIN_SIZE_RANGE = np.arange(0.02, 0.74, 0.01)
-NUM_EXPERIMENTS = 100
 ACTIVE_LEARNING_ROUNDS = 10
-N_SPLITS = 10
+N_SPLITS = 5
 TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
 
 def load_sms_spam_collection(file_path):
@@ -63,10 +63,10 @@ def train_model(x_train, y_train):
 # Function to perform active learning
 def active_learning(x_train, y_train, unlabel, label, target_train_size, total_data_size):
     rounds = 0
-    if len(y_train) < target_train_size:
-        print('smaller')
-    else:
-        print('larger')
+    # if len(y_train) < target_train_size:
+    #     print('smaller')
+    # else:
+    #     print('larger')
     while len(y_train) < target_train_size and rounds < ACTIVE_LEARNING_ROUNDS:
         classifier = train_model(x_train, y_train)
 
@@ -105,22 +105,57 @@ def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
     classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     accuracies, f1_scores, precision_scores, losses = [], [], [], []
+    tp, fp, tn, fn = 0, 0, 0, 0
+
 
     for train_index, val_index in skf.split(x_train, y_train):
         x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
         y_train_fold, y_val_fold = y_train[train_index], y_train[val_index]
 
         classifier.fit(x_train_fold, y_train_fold)
-        accuracies.append(classifier.score(x_val_fold, y_val_fold))
 
+        # Evaluate on the validation fold
         y_pred = classifier.predict(x_val_fold)
-        f1_scores.append(f1_score(y_val_fold, y_pred, average='weighted', zero_division=1))
+        y_prob = classifier.predict_proba(x_val_fold)
+
+        # Convert to numpy arrays and ensure correct data types
+        y_val_fold = np.array(y_val_fold, dtype=int)
+        y_pred = np.array(y_pred, dtype=int)
+
+        # Compute TP, FP, TN, FN
+        tp_mask = (y_pred == 1) & (y_val_fold == 1)
+        fp_mask = (y_pred == 1) & (y_val_fold == 0)
+        tn_mask = (y_pred == 0) & (y_val_fold == 0)
+        fn_mask = (y_pred == 0) & (y_val_fold == 1)
+
+        tp_fold = np.sum([tp_mask])
+        fp_fold = np.sum([fp_mask])
+        tn_fold = np.sum([tn_mask])
+        fn_fold = np.sum([fn_mask])
+
+        tp += tp_fold
+        fp += fp_fold
+        tn += tn_fold
+        fn += fn_fold
+
+        # f1_scores.append(f1_score(y_val_fold, y_pred, average='weighted', zero_division=1, sample_weight=weights[val_index]))
+
+        accuracies.append(classifier.score(x_val_fold, y_val_fold))
         precision_scores.append(precision_score(y_val_fold, y_pred, average='weighted', zero_division=1))
 
         y_prob = classifier.predict_proba(x_val_fold)
         losses.append(log_loss(y_val_fold, y_prob))
 
-    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), np.mean(losses), classifier
+    sum_tp = tp
+    sum_fp = fp
+    sum_tn = tn
+    sum_fn = fn
+
+    precision=sum_tp/(sum_tp+sum_fp)
+    recall=sum_tp/(sum_tp+sum_fn)
+    f1_score=(precision*recall/(precision+recall))*2
+
+    return np.mean(accuracies), np.mean(f1_score), np.mean(precision_scores), np.mean(losses), classifier
 
 # Function to evaluate the model on the test set
 def evaluate_model_on_test_set(classifier, x_test, y_test):
@@ -170,7 +205,6 @@ def compute_gmm_weights_for_train(x_train, y_train):
     return weights
 
 def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=N_SPLITS):
-    print("im in the eval now")
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     accuracies, f1_scores, precision_scores, losses = [], [], [], []
     all_y_probs = []
@@ -178,7 +212,6 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
 
     tp, fp, tn, fn = 0, 0, 0, 0
 
-    print('entering loop')
     for train_index, val_index in skf.split(x_train, y_train):
         x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
         y_train_fold, y_val_fold = y_train[train_index], y_train[val_index]
@@ -187,7 +220,6 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
 
         # Fit the classifier with the GMM weights
         classifier.fit(x_train_fold, y_train_fold)
-
 
         # Evaluate on the validation fold
         y_pred = classifier.predict(x_val_fold)
@@ -204,35 +236,16 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
         tn_mask = (y_pred == 0) & (y_val_fold == 0)
         fn_mask = (y_pred == 0) & (y_val_fold == 1)
 
-        # print('masks')
-        # print(tp_mask)
-
-        # print('weights')
-        # print(val_weights[tp_mask])
-
         #sum the val_weights where tp_mask is true
         tp_fold = np.sum(val_weights[tp_mask])
         fp_fold = np.sum(val_weights[fp_mask])
         tn_fold = np.sum(val_weights[tn_mask])
         fn_fold = np.sum(val_weights[fn_mask])
-
-        print('tp and weights')
-        print(tp_mask)
-        print(val_weights)
-        print(tp_fold)
-
-        # print('folds')
-        # print(tp_fold)
     
         tp += tp_fold
         fp += fp_fold
         tn += tn_fold
         fn += fn_fold
-
-        print(tp)
-
-        # print('actual metrics')
-        # print(tp)
 
         # f1_scores.append(f1_score(y_val_fold, y_pred, average='weighted', zero_division=1, sample_weight=weights[val_index]))
 
@@ -243,35 +256,14 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
         losses.append(log_loss(y_val_fold, y_prob))
         all_y_probs.append(y_prob)
 
-   
-        # print(weights[val_index])
-        # print(val_index)
-        # print(len(weights[val_index]))
-        # print(len(y_pred))
-
-
-    # print(np.mean(f1_scores))
-
-
     sum_tp = tp
     sum_fp = fp
     sum_tn = tn
     sum_fn = fn
 
-    # print('##################################################')
-    # print('this is the final tp of this train percentage!')
-    # print(sum_tp)
-    # print('##################################################')
-
     precision=sum_tp/(sum_tp+sum_fp)
     recall=sum_tp/(sum_tp+sum_fn)
     f1_score=(precision*recall/(precision+recall))*2
-
-
-
-    # print("F1")
-    # print(f1_score)
-    # print("###############################################################################################################################################################################################################################################################################")
 
 
     return (
@@ -294,13 +286,13 @@ def plot_precision_recall_curve(y_true, y_probs, label):
     precision, recall, _ = precision_recall_curve(y_true, y_probs)
     plt.plot(recall, precision, label=f'{label} (PR Curve)')
 
+def smooth_line(x, y, num_points=300):
+    x_smooth = np.linspace(x.min(), x.max(), num_points)  # More points for smooth line
+    spline = make_interp_spline(x, y, k=3)  # Cubic spline interpolation
+    y_smooth = spline(x_smooth)
+    return x_smooth, y_smooth
+
 def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1, weighted_f1_train_active, weighted_f1_train_random):
-    
-    print("HEY IM IN THE PLOT FUNCTION ###################################")
-
-
-    
-    
     plt.figure()
 
     train_sizes_percent = np.array(train_sizes) * 100
@@ -339,6 +331,27 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
     plt.plot(train_sizes_percent, weighted_f1_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
     plt.plot(train_sizes_percent, weighted_f1_train_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
     
+
+    # # Smooth all the lines
+    # x_smooth, y_smooth1 = smooth_line(train_sizes_percent, avg_active_model_f1_plot)
+    # _, y_smooth2 = smooth_line(train_sizes_percent, avg_random_sampling_f1_plot)
+    # _, y_smooth3 = smooth_line(train_sizes_percent, active_test_model_f1)
+    # _, y_smooth4 = smooth_line(train_sizes_percent, random_test_sampling_f1)
+    # _, y_smooth5 = smooth_line(train_sizes_percent, weighted_active_f1)
+    # _, y_smooth6 = smooth_line(train_sizes_percent, weighted_random_f1)
+    # _, y_smooth7 = smooth_line(train_sizes_percent, weighted_f1_train_active)
+    # _, y_smooth8 = smooth_line(train_sizes_percent, weighted_f1_train_random)
+
+    # # Plot the smoothed lines
+    # plt.plot(x_smooth, y_smooth1, label="Active Learning CV", color=colors["Active Learning CV"])
+    # plt.plot(x_smooth, y_smooth2, label="Random Sampling CV", color=colors["Random Sampling CV"])
+    # plt.plot(x_smooth, y_smooth3, label="Active Learning test", color=colors["Active Learning test"])
+    # plt.plot(x_smooth, y_smooth4, label="Random Sampling test", color=colors["Random Sampling test"])
+    # plt.plot(x_smooth, y_smooth5, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
+    # plt.plot(x_smooth, y_smooth6, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
+    # plt.plot(x_smooth, y_smooth7, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
+    # plt.plot(x_smooth, y_smooth8, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
+
     plt.xlabel("Train Size (%)")
     plt.ylabel("F1 Score")
     plt.title("F1 Score vs. Train Size")
