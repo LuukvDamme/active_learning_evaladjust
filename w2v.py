@@ -85,7 +85,7 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
         y_train = np.append(label[uncertain_indices], y_train)
         unlabel = np.delete(unlabel, uncertain_indices, axis=0)
         label = np.delete(label, uncertain_indices)
-        rounds += 1
+        rounds += 1 
         current_train_percentage = (len(y_train) / total_data_size) * 100
 
         # Calculate and print the ratio of each label
@@ -153,9 +153,10 @@ def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
 
     precision=sum_tp/(sum_tp+sum_fp)
     recall=sum_tp/(sum_tp+sum_fn)
+    accuracy=(sum_tp+sum_tn)/(sum_tp+sum_tn+sum_fp+sum_fn)
     f1_score=(precision*recall/(precision+recall))*2
 
-    return np.mean(accuracies), np.mean(f1_score), np.mean(precision_scores), np.mean(losses), classifier
+    return accuracy, f1_score, np.mean(precision_scores), np.mean(losses), classifier
 
 # Function to evaluate the model on the test set
 def evaluate_model_on_test_set(classifier, x_test, y_test):
@@ -263,11 +264,12 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
 
     precision=sum_tp/(sum_tp+sum_fp)
     recall=sum_tp/(sum_tp+sum_fn)
+    accuracy=(sum_tp+sum_tn)/(sum_tp+sum_tn+sum_fp+sum_fn)
     f1_score=(precision*recall/(precision+recall))*2
 
 
     return (
-        np.mean(accuracies),
+        accuracy,
         f1_score,
         np.mean(precision_scores),
         np.mean(losses),
@@ -400,7 +402,7 @@ def plot_gmm_ellipsoids(gmm, X, ax, label):
     ax.legend()
 
 
-def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv_accuracy, active_test_accuracy, random_test_accuracy):
+def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv_accuracy, active_test_accuracy, random_test_accuracy, weighted_acc_active, weighted_acc_rand, weighted_acc_train_active, weighted_acc_tran_random):
     plt.figure()
 
     train_sizes_percent = np.array(train_sizes) * 100
@@ -410,13 +412,21 @@ def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv
         "Active Learning CV": "#1f77b4",       # Blue
         "Random Sampling CV": "#8c564b",  # Brown
         "Active Learning test": "#2ca02c",     # Green
-        "Random Sampling test": "#d62728"      # Red
+        "Random Sampling test": "#d62728",     # Red
+        "Weighted Active Learning test": "#2ca02c", # green
+        "Weighted Random Sampling test": "#d62728",       # red
+        "Weighted Active Learning train": "#1f77b4", # blue
+        "Weighted Random Sampling train": "#8c564b"       # brown
     }
 
     plt.plot(train_sizes_percent, active_learning_cv_accuracy, label="Active Learning CV", color=colors["Active Learning CV"])
     plt.plot(train_sizes_percent, random_sampling_cv_accuracy, label="Random Sampling CV", color=colors["Random Sampling CV"])
     plt.plot(train_sizes_percent, active_test_accuracy, label="Active Learning test", color=colors["Active Learning test"])
     plt.plot(train_sizes_percent, random_test_accuracy, label="Random Sampling test", color=colors["Random Sampling test"])
+    plt.plot(train_sizes_percent, weighted_acc_active, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_acc_rand, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_acc_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
+    plt.plot(train_sizes_percent, weighted_acc_tran_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
     
     plt.xlabel("Train Size (%)")
     plt.ylabel("Accuracy")
@@ -444,15 +454,15 @@ def print_debug_info(name, data):
 
 def main():
 
-    # # Ensure NLTK data is available
-    # nltk.download('punkt')
-
-    # # Load and preprocess the dataset
-    # dataset = preprocess_and_vectorize(DATA_FILE)
+    # Ensure NLTK data is available
+    nltk.download('punkt')
 
     # Load and preprocess the dataset
-    df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
-    dataset = df.values
+    dataset = preprocess_and_vectorize(DATA_FILE)
+
+    # # Load and preprocess the dataset
+    # df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
+    # dataset = df.values
 
     # Impute missing values with the mean of each column
     imputer = SimpleImputer(strategy="mean")
@@ -483,6 +493,11 @@ def main():
 
     weighted_f1_train_active_list=[]
     weighted_f1_train_random_list=[]
+
+    weighted_acc_active=[]
+    weighted_acc_rand=[]
+    weighted_acc_train_active=[]
+    weighted_acc_train_random=[]
 
     x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size)
     unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE)
@@ -544,13 +559,15 @@ def main():
             active_test_model_accuracy.append(test_accuracy)
 
             # Compute weighted F1 for active learning
-            _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
+            weighted_acc, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
             weighted_active_f1.append(weighted_f1_active)
+            #weighted_acc_active.append(weighted_acc)
 
 
             # Compute weighted F1 for the training set
-            train_accuracy, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(classifier_active, x_train_active, y_train_active, train_weights_active)
+            weighted_acc_active, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(classifier_active, x_train_active, y_train_active, train_weights_active)
             weighted_f1_train_active_list.append(weighted_f1_train_active)
+            #weighted_acc_train_active.append(weighted_acc_active)
 
             # Random sampling for comparison
             rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
@@ -561,16 +578,17 @@ def main():
             # Evaluate random sampling model with weights
             avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
             avg_random_sampling_f1_plot.append(rand_f1)
-            avg_random_sampling_accuracy_plot.append(avg_accuracy)
+            #avg_random_sampling_accuracy_plot.append(avg_accuracy)
 
             classifier_rand = train_model(x_rand_train, y_rand_train)
             test_accuracy, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
             random_test_sampling_f1.append(random_test_f1)
-            random_test_sampling_accuracy.append(test_accuracy)
+            #random_test_sampling_accuracy.append(test_accuracy)
 
             # Compute weighted F1 for random sampling
-            _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
+            weighted_acc_random, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
             weighted_random_f1.append(weighted_f1_rand)
+            #weighted_acc_rand.append(weighted_acc_random)
 
             #IT SEEMS THE RANDOM SET IS 1% AHEAD
             train_weights_rand = train_weights[:len(y_rand_train)]
@@ -578,8 +596,9 @@ def main():
 
             # Compute weighted F1 for the random sampling training set
             
-            _, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, train_weights_rand)
+            weighted_acc_train, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, train_weights_rand)
             weighted_f1_train_random_list.append(weighted_f1_train_random)
+            #weighted_acc_train_random.append(weighted_acc_train)
             train_sizes.append(train_size_percentage)
 
             # Fit Gaussian Mixture Model to calculate densities and plot
@@ -621,7 +640,7 @@ def main():
     print("great success")
 
     # Plot Accuracies
-    plot_accuracies(train_sizes, avg_active_model_accuracy_plot, avg_random_sampling_accuracy_plot, active_test_model_accuracy, random_test_sampling_accuracy)
+    #plot_accuracies(train_sizes, avg_active_model_accuracy_plot, avg_random_sampling_accuracy_plot, active_test_model_accuracy, random_test_sampling_accuracy, weighted_acc_active, weighted_acc_rand, weighted_acc_train_active, weighted_acc_train_random)
 
     # Plot ROC Curve
     plt.figure()
