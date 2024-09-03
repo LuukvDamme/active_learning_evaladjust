@@ -385,21 +385,31 @@ def fit_and_plot_gmm_density(x_train, y_train, x_test, y_test, n_components=2):
 
 
 # Function to plot Gaussian Mixture Model ellipsoids
-def plot_gmm_ellipsoids(gmm, X, ax, label):
+def plot_gmm_ellipsoids(gmm, X, ax=None, label='GMM Components'):
+    if ax is None:
+        fig, ax = plt.subplots()  # Create a new figure and axes if none are provided
+
     colors = ['red', 'blue']  # Adjust the colors based on the number of components
     for i, (mean, covar) in enumerate(zip(gmm.means_, gmm.covariances_)):
         v, w = np.linalg.eigh(covar)
         v = 2.0 * np.sqrt(2.0) * np.sqrt(v)
         u = w[0] / np.linalg.norm(w[0])
         
-        ell = Ellipse(xy=mean, width=v[0], height=v[1],
-                      angle=np.degrees(np.arctan2(u[1], u[0])),
-                      color=colors[i], alpha=0.5, label=f'{label} Component {i+1}')
+        ell = Ellipse(
+            xy=mean,
+            width=v[0],
+            height=v[1],
+            angle=np.degrees(np.arctan2(u[1], u[0])),
+            color=colors[i % len(colors)],
+            alpha=0.5,
+            label=f'{label} Component {i+1}'
+        )
         ax.add_patch(ell)
-    
+
     ax.scatter(X[:, 0], X[:, 1], s=10, color='black', label='Data')
     ax.set_title(f'GMM Ellipsoids - {label}')
     ax.legend()
+    plt.show()
 
 
 def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv_accuracy, active_test_accuracy, random_test_accuracy, weighted_acc_active, weighted_acc_rand, weighted_acc_train_active, weighted_acc_tran_random):
@@ -602,7 +612,7 @@ def main():
             train_sizes.append(train_size_percentage)
 
             # Fit Gaussian Mixture Model to calculate densities and plot
-            # weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
+            weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
 
             # if train_size_percentage * 100 % 10 == 0:
             #     plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning ({train_size_percentage*100:.0f}%)')
@@ -613,11 +623,11 @@ def main():
             print(f"An error occurred during processing for train size {train_size_percentage*100:.2f}%: {e}")
             continue
 
-    #plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning (Final)')
-    #plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set (Final)')
+    plot_gmm_ellipsoids(gmm_train_active, x_train_active)
+    plot_gmm_ellipsoids(gmm_test_active, x_test)
 
-    # plt.tight_layout()
-    # plt.show()
+    plt.tight_layout()
+    plt.show()
     print("############################################################################")
     print(weighted_f1_train_active_list)
     print(weighted_f1_train_random_list)
