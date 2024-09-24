@@ -15,6 +15,8 @@ from matplotlib.patches import Ellipse
 from scipy.interpolate import make_interp_spline
 import random
 
+np.seterr(over='ignore')  # Suppress overflow warnings
+
 # Constants
 DATA_FILE = 'SMSSpamCollection'
 INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01
@@ -97,6 +99,7 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
 
         print(f"Round {rounds}: Added {len(uncertain_indices)} samples, total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
         print(f"Label ratios - Spam: {spam_ratio:.2f}%, Ham: {ham_ratio:.2f}%")
+        print("###########################################################################")
 
     return x_train, y_train, unlabel, label
 
@@ -196,15 +199,26 @@ def compute_gmm_weights(x_test, y_test):
     weights[y_test == 0] = probs[y_test == 0, 0]  # Weight for ham
     return weights
 
-# Function to compute GMM-based weights on the training set
-def compute_gmm_weights_for_train(x_train, y_train):
+# Function to compute GMM-based log-probabilities on the training set
+def compute_gmm_log_weights_for_train(x_train, y_train):
     gmm = GaussianMixture(n_components=2, random_state=42)
     gmm.fit(x_train)
-    probs = gmm.predict_proba(x_train)
-    weights = np.zeros_like(y_train, dtype=float)
-    weights[y_train == 1] = probs[y_train == 1, 1]  # Weight for spam
-    weights[y_train == 0] = probs[y_train == 0, 0]  # Weight for ham
-    return weights
+    
+    # Compute the log likelihood for each sample
+    log_likelihoods = gmm.score_samples(x_train)
+
+    
+    # # To assign weights based on class labels
+    # weights = np.zeros_like(y_train, dtype=float)
+    # weights[y_train == 1] = log_likelihoods[y_train == 1]  # Log weight for spam
+    # weights[y_train == 0] = log_likelihoods[y_train == 0]  # Log weight for ham
+
+    weights=log_likelihoods
+
+    
+    return weights    # To assign weights based on class labels
+
+
 
 def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=N_SPLITS):
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
@@ -243,7 +257,7 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
         fp_fold = np.sum(val_weights[fp_mask])
         tn_fold = np.sum(val_weights[tn_mask])
         fn_fold = np.sum(val_weights[fn_mask])
-    
+
         tp += tp_fold
         fp += fp_fold
         tn += tn_fold
@@ -263,10 +277,20 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
     sum_tn = tn
     sum_fn = fn
 
+    print('tp', sum_tp)
+    print('fp', sum_fp)
+    print('tn', sum_tn)
+    print('fn', sum_fn)
+
+
     precision=sum_tp/(sum_tp+sum_fp)
     recall=sum_tp/(sum_tp+sum_fn)
     accuracy=(sum_tp+sum_tn)/(sum_tp+sum_tn+sum_fp+sum_fn)
-    f1_score=(precision*recall/(precision+recall))*2
+    f1_score = (2 * precision * recall) / (precision + recall)
+
+    print('precision', precision)
+    print('recall', recall)
+    print('f1', f1_score)
 
 
     return (
@@ -464,16 +488,11 @@ def print_debug_info(name, data):
 
 
 def main():
-
     # Ensure NLTK data is available
     nltk.download('punkt')
 
     # Load and preprocess the dataset
     dataset = preprocess_and_vectorize(DATA_FILE)
-
-    # # Load and preprocess the dataset
-    # df = pd.read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/spambase/spambase.data", header=None)
-    # dataset = df.values
 
     # Impute missing values with the mean of each column
     imputer = SimpleImputer(strategy="mean")
@@ -486,9 +505,7 @@ def main():
     total_data_size = len(dataset)
     initial_train_size = int(INITIAL_TRAIN_SIZE_PERCENTAGE * total_data_size)
 
-    
-
-
+    # Initialize cumulative lists to store results HARDCODED 72 CHANGE WITH THE SHAPE OF THE MATRIX
     cumulative_avg_active_f1 = [0] * 72
     cumulative_active_test_f1_list = [0] * 72
     cumulative_weighted_active_f1_list = [0] * 72
@@ -497,72 +514,44 @@ def main():
     cumulative_random_test_f1_list = [0] * 72
     cumulative_weighted_random_f1_list = [0] * 72
     cumulative_weighted_f1_train_random_list = [0] * 72
-    
-    experiments = 10
+
+    experiments = 1
     for _ in range(experiments):
-
-
+        # Initialize lists for each experiment
         train_sizes = []
         weighted_f1_train_active = []
         weighted_f1_train_random = []
-
+        
         avg_active_model_accuracy_plot = []
         avg_random_sampling_accuracy_plot = []
         active_test_model_accuracy = []
         random_test_sampling_accuracy = []
-
-        weighted_acc_active=[]
-        weighted_acc_rand=[]
-        weighted_acc_train_active=[]
-        weighted_acc_train_random=[]
-
+        
         avg_active_f1_list = []
-        avg_active_accuracy_list = []
         avg_active_test_f1_list = []
-        avg_active_test_accuracy_list = []
         avg_weighted_active_f1_list = []
         avg_weighted_f1_train_active_list = []
-
+        
         avg_random_sampling_f1_list = []
         avg_random_test_f1_list = []
         avg_weighted_random_f1_list = []
         avg_weighted_f1_train_random_list = []
-
+        
         num = random.randint(1, 500)
-
         x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size, num)
         unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE, num)
-
-        print(f"x_train shape: {x_train.shape}")
-        print(f"x_train shape: {y_train.shape}")
-        print("#####################")
-        print(f"x_train shape: {x_pool.shape}")
-        print(f"x_train shape: {y_pool.shape}")
-        print("#####################")
-        print(f"x_train shape: {unlabel.shape}")
-        print(f"x_train shape: {label.shape}")
-        print("#####################")
-        print(f"x_train shape: {x_test.shape}")
-        print(f"x_train shape: {y_test.shape}")
-        print("#####################")
-
-        # # Compute GMM-based weights for the training set
-        # train_weights = compute_gmm_weights_for_train(x_train, y_train)
-
+        
         # Compute GMM-based weights for the test set
         test_weights = compute_gmm_weights(x_test, y_test)
-        train_weights = compute_gmm_weights_for_train(unlabel, label)
+        train_weights = compute_gmm_log_weights_for_train(unlabel, label)
 
-        # num_plots = int(1 / 0.1) + 1
-        # fig, axes = plt.subplots(num_plots, 2, figsize=(14, 7 * num_plots))
-
-        # plot_index = 0
-
-        runs=1
-
-        for train_size_percentage in TRAIN_SIZE_RANGE:    
-            weighted_f1_train_active_list=[]
-            weighted_f1_train_random_list=[]
+        print(f"Min weight: {train_weights.min()}, Max weight: {train_weights.max()}")
+        np.savetxt('train_weights.txt', train_weights, delimiter=',')
+        
+        runs = 1
+        for train_size_percentage in TRAIN_SIZE_RANGE:
+            weighted_f1_train_active_list = []
+            weighted_f1_train_random_list = []
             avg_active_model_f1_plot = []
             avg_random_sampling_f1_plot = []
             active_test_model_f1 = []
@@ -572,26 +561,30 @@ def main():
 
             for _ in range(runs):
                 try:
-                    
-            
                     train_size = int(train_size_percentage * total_data_size)
-
                     x_train_active, y_train_active, unlabel_active, label_active = active_learning(
                         x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
 
-                    # Compute weights for the active learning training set
-                    #weights op totaal train set
-
-                    # print(f"x_train shape: {x_train.shape}")
-                    # print(f"x_train_active shape: {x_train_active.shape}")
-
-                    train_weights_active = train_weights[:len(y_train_active)]
+                    # Compute log weights for active learning
+                    train_weights_active_loop = compute_gmm_log_weights_for_train(x_train_active, y_train_active)
+                    # train_weights_active_loop = np.nan_to_num(train_weights_active_loop, nan=1)
+                    print(f"Min weight: {train_weights_active_loop.min()}, Max weight: {train_weights_active_loop.max()}")
+                    np.savetxt('train_weights_loop.txt', train_weights_active_loop, delimiter=',')
+                    
+                    # Subtract weights for active learning
+                    train_weights_active_original = train_weights[:len(y_train_active)]
+                    # train_weights_active = np.subtract(train_weights_active_original, train_weights_active_loop)
+                    
+                    train_weights_active = train_weights_active_original - train_weights_active_loop
                     
 
-                    # train_weights_active = compute_gmm_weights_for_train(x_train_active, y_train_active)
-                    
+                    train_weights_active=np.exp(train_weights_active)
 
-                    # Evaluate active learning model with weights
+                    np.savetxt('train_weights_active.txt', train_weights_active, delimiter=',')
+
+                    print(f"Min weight: {train_weights_active.min()}, Max weight: {train_weights_active.max()}")
+                    
+                    # Evaluate active learning model
                     avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
                     avg_active_model_f1_plot.append(active_f1)
                     avg_active_model_accuracy_plot.append(avg_accuracy)
@@ -599,108 +592,53 @@ def main():
                     classifier_active = train_model(x_train_active, y_train_active)
                     test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
                     active_test_model_f1.append(active_test_f1)
-                    active_test_model_accuracy.append(test_accuracy)
 
                     # Compute weighted F1 for active learning
-                    weighted_acc, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
+                    _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
                     weighted_active_f1.append(weighted_f1_active)
-                    #weighted_acc_active.append(weighted_acc)
 
-
-                    # Compute weighted F1 for the training set
-                    weighted_acc_active, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(classifier_active, x_train_active, y_train_active, train_weights_active)
+                    _, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(
+                        classifier_active, x_train_active, y_train_active, train_weights_active
+                    )
                     weighted_f1_train_active_list.append(weighted_f1_train_active)
-                    #weighted_acc_train_active.append(weighted_acc_active)
 
                     # Random sampling for comparison
                     rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
                     x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
                     y_rand_train = np.concatenate((y_train, label[rand_indices]))
 
-
-                    # Evaluate random sampling model with weights
                     avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
                     avg_random_sampling_f1_plot.append(rand_f1)
-                    #avg_random_sampling_accuracy_plot.append(avg_accuracy)
 
                     classifier_rand = train_model(x_rand_train, y_rand_train)
-                    test_accuracy, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
+                    _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
                     random_test_sampling_f1.append(random_test_f1)
-                    #random_test_sampling_accuracy.append(test_accuracy)
 
-                    # Compute weighted F1 for random sampling
-                    weighted_acc_random, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
+                    _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
                     weighted_random_f1.append(weighted_f1_rand)
-                    #weighted_acc_rand.append(weighted_acc_random)
 
-                    #IT SEEMS THE RANDOM SET IS 1% AHEAD
-                    train_weights_rand = train_weights[:len(y_rand_train)]
-
-
-                    # Compute weighted F1 for the random sampling training set
-                    
-                    weighted_acc_train, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, train_weights_rand)
+                    _, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(
+                        classifier_rand, x_rand_train, y_rand_train, train_weights[:len(y_rand_train)]
+                    )
                     weighted_f1_train_random_list.append(weighted_f1_train_random)
-                    #weighted_acc_train_random.append(weighted_acc_train)
-
-                    
-                
-
-                    # if train_size_percentage * 100 % 10 == 0:
-                    #     plot_gmm_ellipsoids(gmm_train_active, x_train_active, axes[plot_index, 0], f'Active Learning ({train_size_percentage*100:.0f}%)')
-                    #     plot_gmm_ellipsoids(gmm_test_active, x_test, axes[plot_index, 1], 'Test Set')
-                    #     plot_index += 
-
 
                 except Exception as e:
                     print(f"An error occurred during processing for train size {train_size_percentage*100:.2f}%: {e}")
                     continue
 
+            # Store averaged results
             train_sizes.append(train_size_percentage)
-            
-            # print_debug_info('###########loop list', weighted_f1_train_random_list)
+            avg_active_f1_list.append(np.mean(avg_active_model_f1_plot))
+            avg_active_test_f1_list.append(np.mean(active_test_model_f1))
+            avg_weighted_active_f1_list.append(np.mean(weighted_active_f1))
+            avg_weighted_f1_train_active_list.append(np.mean(weighted_f1_train_active_list))
 
-            # Compute averages of the metrics after all runs
-            avg_active_f1 = sum(avg_active_model_f1_plot) / len(avg_active_model_f1_plot)
-            avg_active_accuracy = sum(avg_active_model_accuracy_plot) / len(avg_active_model_accuracy_plot)
-            avg_active_test_f1 = sum(active_test_model_f1) / len(active_test_model_f1)
-            avg_active_test_accuracy = sum(active_test_model_accuracy) / len(active_test_model_accuracy)
-            avg_weighted_active_f1 = sum(weighted_active_f1) / len(weighted_active_f1)
-            avg_weighted_f1_train_active = sum(weighted_f1_train_active_list) / len(weighted_f1_train_active_list)
+            avg_random_sampling_f1_list.append(np.mean(avg_random_sampling_f1_plot))
+            avg_random_test_f1_list.append(np.mean(random_test_sampling_f1))
+            avg_weighted_random_f1_list.append(np.mean(weighted_random_f1))
+            avg_weighted_f1_train_random_list.append(np.mean(weighted_f1_train_random_list))
 
-            avg_random_sampling_f1 = sum(avg_random_sampling_f1_plot) / len(avg_random_sampling_f1_plot)
-            avg_random_test_f1 = sum(random_test_sampling_f1) / len(random_test_sampling_f1)
-            avg_weighted_random_f1 = sum(weighted_random_f1) / len(weighted_random_f1)
-            avg_weighted_f1_train_random = sum(weighted_f1_train_random_list) / len(weighted_f1_train_random_list)
-
-            # print(f"Average Active F1: {avg_active_f1}")
-            # print(f"Average Active Accuracy: {avg_active_accuracy}")
-            # print(f"Average Active Test F1: {avg_active_test_f1}")
-            # print(f"Average Active Test Accuracy: {avg_active_test_accuracy}")
-            # print(f"Average Weighted Active F1: {avg_weighted_active_f1}")
-            # print(f"Average Weighted F1 Train Active: {avg_weighted_f1_train_active}")
-            # print(f"Average Random Sampling F1: {avg_random_sampling_f1}")
-            # print(f"Average Random Test F1: {avg_random_test_f1}")
-            # print(f"Average Weighted Random F1: {avg_weighted_random_f1}")
-            # print(f"Average Weighted F1 Train Random: {avg_weighted_f1_train_random}")
-
-            # Append averages to their respective lists
-            avg_active_f1_list.append(avg_active_f1)
-            avg_active_accuracy_list.append(avg_active_accuracy)
-            avg_active_test_f1_list.append(avg_active_test_f1)
-            avg_active_test_accuracy_list.append(avg_active_test_accuracy)
-            avg_weighted_active_f1_list.append(avg_weighted_active_f1)
-            avg_weighted_f1_train_active_list.append(avg_weighted_f1_train_active)
-
-            avg_random_sampling_f1_list.append(avg_random_sampling_f1)
-            avg_random_test_f1_list.append(avg_random_test_f1)
-            avg_weighted_random_f1_list.append(avg_weighted_random_f1)
-            avg_weighted_f1_train_random_list.append(avg_weighted_f1_train_random)
-            
-
-
-
-
+        # Update cumulative results
         for i in range(72):
             cumulative_avg_active_f1[i] += avg_active_f1_list[i]
             cumulative_active_test_f1_list[i] += avg_active_test_f1_list[i]
@@ -711,7 +649,7 @@ def main():
             cumulative_weighted_random_f1_list[i] += avg_weighted_random_f1_list[i]
             cumulative_weighted_f1_train_random_list[i] += avg_weighted_f1_train_random_list[i]
 
-
+    # Final averages after all experiments
     final_avg_active_f1 = [x / experiments for x in cumulative_avg_active_f1]
     final_active_test_f1_list = [x / experiments for x in cumulative_active_test_f1_list]
     final_weighted_active_f1_list = [x / experiments for x in cumulative_weighted_active_f1_list]
@@ -721,88 +659,24 @@ def main():
     final_weighted_random_f1_list = [x / experiments for x in cumulative_weighted_random_f1_list]
     final_weighted_f1_train_random_list = [x / experiments for x in cumulative_weighted_f1_train_random_list]
 
+    # Logging final results
+    log_file_path = "./log.txt"
+    with open(log_file_path, 'w') as f:
+        f.write(f"final_avg_active_f1: {final_avg_active_f1}\n")
+        f.write(f"final_active_test_f1: {final_active_test_f1_list}\n")
+        f.write(f"final_weighted_active_f1_test: {final_weighted_active_f1_list}\n")
+        f.write(f"final_weighted_f1_train_active_train: {final_weighted_f1_train_active_list}\n")
+        f.write(f"final_random_sampling_f1: {final_random_sampling_f1_list}\n")
+        f.write(f"final_random_test_f1: {final_random_test_f1_list}\n")
+        f.write(f"final_weighted_random_f1_test: {final_weighted_random_f1_list}\n")
+        f.write(f"final_weighted_f1_train_random_train: {final_weighted_f1_train_random_list}\n")
+
+    print(f"Results saved to {log_file_path}")
 
 
 
 
-
-
-
-
-
-
-    print('##################cumul avg')
-    print(cumulative_avg_active_f1)
-
-    print_debug_info('######################################### FINAL F1', final_avg_active_f1)
-
-
-            
-
-    print(final_avg_active_f1)
-    print_debug_info('list', avg_weighted_f1_train_active_list)
-     # Fit Gaussian Mixture Model to calculate densities and plot
-    weights, gmm_train_active, gmm_test_active = fit_and_plot_gmm_density(x_train_active, y_train_active, x_test, y_test)
-
-    plot_gmm_ellipsoids(gmm_train_active, x_train_active)
-    plot_gmm_ellipsoids(gmm_test_active, x_test)
-
-    plt.tight_layout()
-    plt.show()
-    # print("############################################################################")
-    # print(weighted_f1_train_active_list)
-    # print(weighted_f1_train_random_list)
-    # print("##############################################################################")
-
-    # # Print debug information
-    # print_debug_info("train_sizes", train_sizes)
-    # print_debug_info("avg_active_model_f1_plot", avg_active_model_f1_plot)
-    # print_debug_info("avg_random_sampling_f1_plot", avg_random_sampling_f1_plot)
-    # print_debug_info("active_test_model_f1", active_test_model_f1)
-    # print_debug_info("random_test_sampling_f1", random_test_sampling_f1)
-    # print_debug_info("weighted_active_f1", weighted_active_f1)
-    # print_debug_info("weighted_random_f1", weighted_random_f1)
-    # print_debug_info("weighted_f1_train_active_list", weighted_f1_train_active_list)
-    # print_debug_info("weighted_f1_train_random", weighted_f1_train_random)
-    # Plot F1 Scores
-
-    print("PLOTTING F1 SCORES")
-    # plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1, weighted_f1_train_active_list, weighted_f1_train_random_list)
-#     plot_f1_scores(
-#     train_sizes, 
-#     avg_active_f1_list, 
-#     avg_active_test_f1_list, 
-#     avg_weighted_active_f1_list, 
-#     avg_weighted_f1_train_active_list, 
-#     avg_random_sampling_f1_list, 
-#     avg_random_test_f1_list, 
-#     avg_weighted_random_f1_list, 
-#     avg_weighted_f1_train_random_list
-# )
-
-
-    # plt.plot(train_sizes_percent, avg_active_model_f1_plot, label="Active Learning CV", color=colors["Active Learning CV"])
-    # plt.plot(train_sizes_percent, avg_random_sampling_f1_plot, label="Random Sampling CV", color=colors["Random Sampling CV"])
-    # plt.plot(train_sizes_percent, active_test_model_f1, label="Active Learning test", color=colors["Active Learning test"])
-    # plt.plot(train_sizes_percent, random_test_sampling_f1, label="Random Sampling test", color=colors["Random Sampling test"])
-    # plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
-    # plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
-    # plt.plot(train_sizes_percent, weighted_f1_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
-    # plt.plot(train_sizes_percent, weighted_f1_train_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
-
-    plot_f1_scores(
-    train_sizes, 
-    avg_active_f1_list, 
-    avg_random_sampling_f1_list, 
-    avg_active_test_f1_list, 
-    avg_random_test_f1_list, 
-    avg_weighted_active_f1_list, 
-    avg_weighted_random_f1_list, 
-    avg_weighted_f1_train_active_list, 
-    avg_weighted_f1_train_random_list
-)
-
-    plot_f1_scores(
+    plot_f1_scores( 
     train_sizes, 
     final_avg_active_f1, 
     final_random_sampling_f1_list, 
@@ -813,7 +687,6 @@ def main():
     final_weighted_f1_train_active_list, 
     final_weighted_f1_train_random_list
 )
-
 
     # Plot Accuracies
     #plot_accuracies(train_sizes, avg_active_model_accuracy_plot, avg_random_sampling_accuracy_plot, active_test_model_accuracy, random_test_sampling_accuracy, weighted_acc_active, weighted_acc_rand, weighted_acc_train_active, weighted_acc_train_random)
