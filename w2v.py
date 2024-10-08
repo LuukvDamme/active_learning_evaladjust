@@ -23,6 +23,7 @@ from scipy.stats import entropy
 from sklearn.metrics import precision_score, log_loss, f1_score, accuracy_score
 from sklearn.metrics import precision_score, log_loss, f1_score as sklearn_f1_score
 from sklearn.metrics import confusion_matrix
+import os
 
 
 np.seterr(over='ignore')  # Suppress overflow warnings
@@ -184,7 +185,7 @@ def evaluate_model_on_test_set_weighted(classifier, x_test, y_test):
 def compute_gmm_log_weights_for_train(x_train, y_train):
     # gmm = GaussianMixture(n_components=2, random_state=42)
     # gmm.fit(x_train)
-    print_debug_info('X_TRAIN;', x_train)
+    # print_debug_info('X_TRAIN;', x_train)
 
     gmm = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(x_train[:,0:2])
     
@@ -266,11 +267,11 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
 
     # Before plotting, check the values of x and y
     print("train_sizes_percent (x):", train_sizes_percent)
-    print("weighted_f1_train_active (y):", weighted_f1_train_active)
+    # print("weighted_f1_train_active (y):", weighted_f1_train_active)
     
-    # You can also print their types and lengths if they're supposed to be lists or arrays
-    print("Type of train_sizes_percent:", type(train_sizes_percent))
-    print("Type of weighted_f1_train_active:", type(weighted_f1_train_active))
+    # # You can also print their types and lengths if they're supposed to be lists or arrays
+    # print("Type of train_sizes_percent:", type(train_sizes_percent))
+    # print("Type of weighted_f1_train_active:", type(weighted_f1_train_active))
     
     if isinstance(train_sizes_percent, list):
         print("Length of train_sizes_percent:", len(train_sizes_percent))
@@ -415,8 +416,12 @@ def print_debug_info(name, data):
         print(f"{name} - Value: {data}")
 
 
-# Function to plot joint KDE and show data points colored by class
-def plot_joint_kde(x_train, y_train):
+# Function to save the joint KDE plot and show data points colored by class
+def plot_joint_kde(x_train, y_train, save_dir="plots", file_name="joint_kde_plot"):
+    # Create directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
     # Create a figure with a specific layout for marginal distributions
     fig = plt.figure(figsize=(12, 12))  # Keep figure size square
     gs = GridSpec(5, 4, wspace=0.5, hspace=1.2)  # Increase hspace to add vertical space between plots
@@ -470,23 +475,212 @@ def plot_joint_kde(x_train, y_train):
     # Adjust layout with padding to move the bottom plot down
     plt.subplots_adjust(bottom=0.1, top=0.95)  # Increase bottom space
 
-    # Show the plot
-    plt.show()
+    # Save the plot instead of showing it
+    save_path = os.path.join(save_dir, f"{file_name}.png")
+    plt.savefig(save_path, bbox_inches='tight')  # Save the figure to file
+    plt.close()  # Close the figure to free memory
+
+    print(f"Saved KDE plot to {save_path}")
 
 
-def plot_joint_kde_simple(x_train, y_train):
+# Function to save the simple joint KDE plot
+def plot_joint_kde_simple(x_train, y_train, save_dir="plots", file_name="joint_kde_simple_plot"):
+    # Create directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
     # Combine the training data (x_train and y_train) into a single array for plotting
     data = np.column_stack((x_train, y_train))
 
     # Assuming x_train has 2 features, you can create a jointplot
-    sns.jointplot(x=data[:, 0], y=data[:, 1], kind="kde", fill=True)
+    jointplot = sns.jointplot(x=data[:, 0], y=data[:, 1], kind="kde", fill=True)
 
-    # Show the plot
-    plt.show()
+    # Save the plot instead of showing it
+    save_path = os.path.join(save_dir, f"{file_name}.png")
+    jointplot.savefig(save_path, bbox_inches='tight')  # Save the jointplot to file
+    plt.close()  # Close the figure to free memory
+
+    print(f"Saved simple KDE plot to {save_path}")
+
+
+def run_experiment(dataset, initial_train_size, total_data_size, experiments):
+    """
+    Runs multiple cycles of experiments and aggregates the results.
+    """
+    cumulative_results = {
+        'avg_active_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'random_sampling_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'active_test_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'random_test_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'weighted_active_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'weighted_random_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'weighted_train_active_f1': [0] * len(TRAIN_SIZE_RANGE),
+        'weighted_train_random_f1': [0] * len(TRAIN_SIZE_RANGE),
+    }
+    
+    # Run multiple experiments
+    for _ in range(experiments):
+        train_sizes, results = run_training_cycle(dataset, initial_train_size, total_data_size)
+
+        # Aggregate the results
+        for key in cumulative_results:
+            cumulative_results[key] = [x + y for x, y in zip(cumulative_results[key], results[key])]
+    
+    # Average the results over the number of experiments
+    for key in cumulative_results:
+        cumulative_results[key] = [x / experiments for x in cumulative_results[key]]
+    
+    return train_sizes, cumulative_results
+
+
+def run_training_cycle(dataset, initial_train_size, total_data_size):
+    """
+    Runs a single experiment cycle for active learning and random sampling.
+    Uses the weights during training and evaluation.
+    """
+    # Shuffle dataset
+    random.shuffle(dataset)
+
+    train_sizes = []
+    
+    # Initialize lists to store metrics for this experiment
+    avg_active_f1_list = []
+    avg_random_f1_list = []
+    active_test_f1_list = []
+    random_test_f1_list = []
+    weighted_active_f1_list = []
+    weighted_random_f1_list = []
+    weighted_f1_train_active_list = []
+    weighted_f1_train_random_list = []
+
+    # Split dataset into training, pool, and test sets
+    num = random.randint(1, 500)
+    x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size, num)
+    unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE, num)
+
+    # Assuming x_train and y_train are already defined
+    plot_joint_kde(x_train, y_train, save_dir="plots", file_name="initial_joint_kde")
+    plot_joint_kde_simple(x_train, y_train, save_dir="plots", file_name="initial_joint_kde_simple")
+
+
+
+    # Compute GMM-based weights for the unlabelled data
+    train_weights = compute_gmm_log_weights_for_train(unlabel, label)
+
+    runs = 1  # Number of runs for each train size percentage
+    for train_size_percentage in TRAIN_SIZE_RANGE:
+        weighted_f1_train_active_list_run = []
+        weighted_f1_train_random_list_run = []
+        avg_active_model_f1_plot = []
+        avg_random_sampling_f1_plot = []
+        active_test_model_f1 = []
+        random_test_sampling_f1 = []
+        weighted_active_f1 = []
+        weighted_random_f1 = []
+
+        for _ in range(runs):
+            try:
+                train_size = int(train_size_percentage * total_data_size)
+        
+                
+                # Active learning process
+                x_train_active, y_train_active, unlabel_active, label_active = active_learning(
+                    x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
+                
+                if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.95), (19.95, 20.95), 
+                                                                                 (29.95, 30.95), (39.95, 40.95),
+                                                                                 (49.95, 50.95), (59.95, 60.95),
+                                                                                 (69.95, 70.95), (79.95, 80.95),
+                                                                                 (89.95, 90.95), (99.95, 100.95)]):
+                    plot_joint_kde(x_train_active, y_train_active, save_dir="plots", file_name=f"joint_kde_{train_size_percentage:.2f}")
+                    plot_joint_kde_simple(x_train_active, y_train_active, save_dir="plots", file_name=f"joint_kde_simple_{train_size_percentage:.2f}")
+  
+
+                # Compute log weights for active learning
+                train_weights_active_loop = compute_gmm_log_weights_for_train(x_train_active, y_train_active)
+                train_weights_active = np.exp(train_weights[:len(y_train_active)] - train_weights_active_loop)
+
+                # Evaluate active learning model
+                avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
+                avg_active_model_f1_plot.append(active_f1)
+
+                classifier_active = train_model(x_train_active, y_train_active)
+                test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
+                active_test_model_f1.append(active_test_f1)
+
+                # Compute weighted F1 for active learning
+                _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test)
+                weighted_active_f1.append(weighted_f1_active)
+
+                _, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(
+                    classifier_active, x_train_active, y_train_active, train_weights_active
+                )
+                weighted_f1_train_active_list_run.append(weighted_f1_train_active)
+
+                # Random sampling process for comparison
+                rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
+                x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
+                y_rand_train = np.concatenate((y_train, label[rand_indices]))
+
+                avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
+                avg_random_sampling_f1_plot.append(rand_f1)
+
+                classifier_rand = train_model(x_rand_train, y_rand_train)
+                _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
+                random_test_sampling_f1.append(random_test_f1)
+
+                # Compute weighted F1 for random sampling
+                _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test)
+                weighted_random_f1.append(weighted_f1_rand)
+
+                _, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(
+                    classifier_rand, x_rand_train, y_rand_train, train_weights[:len(y_rand_train)]
+                )
+                weighted_f1_train_random_list_run.append(weighted_f1_train_random)
+
+            except Exception as e:
+                print(f"Error during processing for train size {train_size_percentage*100:.2f}%: {e}")
+                continue
+
+        # Store averaged results for this train size
+        train_sizes.append(train_size_percentage)
+        avg_active_f1_list.append(np.mean(avg_active_model_f1_plot))
+        avg_random_f1_list.append(np.mean(avg_random_sampling_f1_plot))
+        active_test_f1_list.append(np.mean(active_test_model_f1))
+        random_test_f1_list.append(np.mean(random_test_sampling_f1))
+        weighted_active_f1_list.append(np.mean(weighted_active_f1))
+        weighted_random_f1_list.append(np.mean(weighted_random_f1))
+        weighted_f1_train_active_list.append(np.mean(weighted_f1_train_active_list_run))
+        weighted_f1_train_random_list.append(np.mean(weighted_f1_train_random_list_run))
+
+    # Return results for this cycle
+    results = {
+        'avg_active_f1': avg_active_f1_list,
+        'random_sampling_f1': avg_random_f1_list,
+        'active_test_f1': active_test_f1_list,
+        'random_test_f1': random_test_f1_list,
+        'weighted_active_f1': weighted_active_f1_list,
+        'weighted_random_f1': weighted_random_f1_list,
+        'weighted_train_active_f1': weighted_f1_train_active_list,
+        'weighted_train_random_f1': weighted_f1_train_random_list,
+    }
+    
+    return train_sizes, results
+
+def log_results(results, log_file_path):
+    """
+    Logs the results to a specified file.
+    """
+    with open(log_file_path, 'w') as f:
+        for key, values in results.items():
+            f.write(f"{key}: {values}\n")
 
 
 def main():
-    n_components=50
+    """
+    Main function to process the dataset, perform PCA, and run experiments on active learning and random sampling.
+    """
+    n_components = 5
 
     # Ensure NLTK data is available
     nltk.download('punkt')
@@ -497,24 +691,14 @@ def main():
     # Impute missing values with the mean of each column
     imputer = SimpleImputer(strategy="mean")
     dataset = imputer.fit_transform(dataset)
-    
 
     # Standardize the dataset (only for the feature columns, not the label)
     scaler = StandardScaler()
     dataset[:, :-1] = scaler.fit_transform(dataset[:, :-1])
 
     # Apply PCA to the dataset (excluding the label column)
-    pca = PCA(n_components=n_components)  # Use the specified number of components
+    pca = PCA(n_components=n_components)
     pca_result = pca.fit_transform(dataset[:, :-1])
-
-    # # Plot explained variance for the chosen number of components
-    # plt.figure(figsize=(8, 6))
-    # plt.plot(range(1, n_components + 1), pca.explained_variance_ratio_, marker='o', linestyle='--')
-    # plt.title(f'Explained Variance by First {n_components} Principal Components')
-    # plt.xlabel('Principal Component')
-    # plt.ylabel('Explained Variance Ratio')
-    # plt.grid(True)
-    # plt.show()
 
     # Combine the selected principal components with the original labels
     new_dataset = np.hstack((pca_result, dataset[:, -1].reshape(-1, 1)))
@@ -523,255 +707,92 @@ def main():
     columns = [f'PC{i+1}' for i in range(n_components)] + ['label']
     pca_df = pd.DataFrame(new_dataset, columns=columns)
 
-    # Output the new dataset with the selected components and the label
     print(f"New Dataset with the top {n_components} Principal Components:\n", pca_df)
 
-
-    dataset=new_dataset
-
+    # Shuffle the dataset
+    dataset = new_dataset
     random.shuffle(dataset)
 
-
-
+    # Setup train/test size parameters
     total_data_size = len(dataset)
     initial_train_size = int(INITIAL_TRAIN_SIZE_PERCENTAGE * total_data_size)
 
-    # Initialize cumulative lists to store results HARDCODED 72 CHANGE WITH THE SHAPE OF THE MATRIX
-    cumulative_avg_active_f1 = [0] * 72
-    cumulative_active_test_f1_list = [0] * 72
-    cumulative_weighted_active_f1_list = [0] * 72
-    cumulative_weighted_f1_train_active_list = [0] * 72
-    cumulative_random_sampling_f1_list = [0] * 72
-    cumulative_random_test_f1_list = [0] * 72
-    cumulative_weighted_random_f1_list = [0] * 72
-    cumulative_weighted_f1_train_random_list = [0] * 72
+    # Initialize cumulative lists for results
+    num_metrics = 72  # HARDCODED: Should match the actual number of metrics
+    cumulative_results = {
+        'avg_active_f1': [0] * num_metrics,
+        'active_test_f1': [0] * num_metrics,
+        'weighted_active_f1': [0] * num_metrics,
+        'weighted_train_active_f1': [0] * num_metrics,
+        'random_sampling_f1': [0] * num_metrics,
+        'random_test_f1': [0] * num_metrics,
+        'weighted_random_f1': [0] * num_metrics,
+        'weighted_train_random_f1': [0] * num_metrics,
+    }
 
-    experiments = 10
+    experiments = 1
     for _ in range(experiments):
-        # Initialize lists for each experiment
-        train_sizes = []
-        weighted_f1_train_active = []
-        weighted_f1_train_random = []
-        
-        avg_active_model_accuracy_plot = []
-        avg_random_sampling_accuracy_plot = []
-        active_test_model_accuracy = []
-        random_test_sampling_accuracy = []
-        
-        avg_active_f1_list = []
-        avg_active_test_f1_list = []
-        avg_weighted_active_f1_list = []
-        avg_weighted_f1_train_active_list = []
-        
-        avg_random_sampling_f1_list = []
-        avg_random_test_f1_list = []
-        avg_weighted_random_f1_list = []
-        avg_weighted_f1_train_random_list = []
-        
-        num = random.randint(1, 500)
-        x_train, y_train, x_pool, y_pool = split_dataset_initial(dataset, initial_train_size / total_data_size, num)
-        unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE, num)
-
-        # Compute GMM-based weights for the test set
-        # test_weights = compute_gmm_weights(x_test, y_test)
-        train_weights = compute_gmm_log_weights_for_train(unlabel, label)
-
-        # print(f"Min weight: {train_weights.min()}, Max weight: {train_weights.max()}")
-        np.savetxt('train_weights.txt', train_weights, delimiter=',')
-
-
-        # plot_joint_kde(unlabel, label)    
-
-        # plot_joint_kde_simple(unlabel, label)
-        
-        runs = 1
-        for train_size_percentage in TRAIN_SIZE_RANGE:
-            weighted_f1_train_active_list = []
-            weighted_f1_train_random_list = []
-            avg_active_model_f1_plot = []
-            avg_random_sampling_f1_plot = []
-            active_test_model_f1 = []
-            random_test_sampling_f1 = []
-            weighted_active_f1 = []
-            weighted_random_f1 = []
-
-            for _ in range(runs):
-                try:
-                    train_size = int(train_size_percentage * total_data_size)
-                    x_train_active, y_train_active, unlabel_active, label_active = active_learning(
-                        x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
-
-                    # Compute log weights for active learning
-                    train_weights_active_loop = compute_gmm_log_weights_for_train(x_train_active, y_train_active)
-                    # train_weights_active_loop = np.nan_to_num(train_weights_active_loop, nan=1)
-                    # print(f"Min weight: {train_weights_active_loop.min()}, Max weight: {train_weights_active_loop.max()}")
-                    np.savetxt('train_weights_loop.txt', train_weights_active_loop, delimiter=',')
-                    
-                    # Subtract weights for active learning
-                    train_weights_active_original = train_weights[:len(y_train_active)]
-                    # train_weights_active = np.subtract(train_weights_active_original, train_weights_active_loop)
-                    
-                    train_weights_active = train_weights_active_original - train_weights_active_loop
-                    
-
-                    train_weights_active=np.exp(train_weights_active)
-
-                    np.savetxt('train_weights_active.txt', train_weights_active, delimiter=',')
-
-                    # print(f"Min weight: {train_weights_active.min()}, Max weight: {train_weights_active.max()}")
-                    
-                    # Evaluate active learning model
-                    avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
-                    avg_active_model_f1_plot.append(active_f1)
-                    avg_active_model_accuracy_plot.append(avg_accuracy)
-
-                    classifier_active = train_model(x_train_active, y_train_active)
-                    test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
-                    active_test_model_f1.append(active_test_f1)
-
-                    # Compute weighted F1 for active learning
-                    _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test)
-                    weighted_active_f1.append(weighted_f1_active)
-
-                    _, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(
-                        classifier_active, x_train_active, y_train_active, train_weights_active
-                    )
-                    weighted_f1_train_active_list.append(weighted_f1_train_active)
-
-                    # Random sampling for comparison
-                    rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
-                    x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
-                    y_rand_train = np.concatenate((y_train, label[rand_indices]))
-                    
-                    avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
-                    avg_random_sampling_f1_plot.append(rand_f1)
-
-                    print('##################################################')
-                    print(rand_f1)
-
-                    classifier_rand = train_model(x_rand_train, y_rand_train)
-                    _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
-                    print('#######################################')
-                    print('test f1')
-                    print(random_test_f1)
-                    random_test_sampling_f1.append(random_test_f1)
-
-                    _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test)
-                    weighted_random_f1.append(weighted_f1_rand)
-
-                    _, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(
-                        classifier_rand, x_rand_train, y_rand_train, train_weights[:len(y_rand_train)]
-                    )
-                    weighted_f1_train_random_list.append(weighted_f1_train_random)
-
-                    # if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.95), (19.95, 20.95), 
-                    #                                                      (29.95, 30.95), (39.95, 40.95),
-                    #                                                      (49.95, 50.95), (59.95, 60.95),
-                    #                                                      (69.95, 70.95), (79.95, 80.95),
-                    #                                                      (89.95, 90.95), (99.95, 100.95)]):
- 
-                    #     plot_joint_kde(x_train_active, y_train_active)  
-                    #     plot_joint_kde_simple(x_train_active, y_train_active)  
-
-
-                except Exception as e:
-                    print(f"An error occurred during processing for train size {train_size_percentage*100:.2f}%: {e}")
-                    continue
-
-            # Store averaged results
-            train_sizes.append(train_size_percentage)
-            avg_active_f1_list.append(np.mean(avg_active_model_f1_plot))
-            avg_active_test_f1_list.append(np.mean(active_test_model_f1))
-            avg_weighted_active_f1_list.append(np.mean(weighted_active_f1))
-            avg_weighted_f1_train_active_list.append(np.mean(weighted_f1_train_active_list))
-
-            avg_random_sampling_f1_list.append(np.mean(avg_random_sampling_f1_plot))
-            avg_random_test_f1_list.append(np.mean(random_test_sampling_f1))
-            avg_weighted_random_f1_list.append(np.mean(weighted_random_f1))
-            avg_weighted_f1_train_random_list.append(np.mean(weighted_f1_train_random_list))
+        train_sizes, results = run_experiment(dataset, initial_train_size, total_data_size, experiments)
 
         # Update cumulative results
-        for i in range(72):
-            cumulative_avg_active_f1[i] += avg_active_f1_list[i]
-            cumulative_active_test_f1_list[i] += avg_active_test_f1_list[i]
-            cumulative_weighted_active_f1_list[i] += avg_weighted_active_f1_list[i]
-            cumulative_weighted_f1_train_active_list[i] += avg_weighted_f1_train_active_list[i]
-            cumulative_random_sampling_f1_list[i] += avg_random_sampling_f1_list[i]
-            cumulative_random_test_f1_list[i] += avg_random_test_f1_list[i]
-            cumulative_weighted_random_f1_list[i] += avg_weighted_random_f1_list[i]
-            cumulative_weighted_f1_train_random_list[i] += avg_weighted_f1_train_random_list[i]
+        for key in cumulative_results:
+            cumulative_results[key] = [x + y for x, y in zip(cumulative_results[key], results[key])]
 
     # Final averages after all experiments
-    final_avg_active_f1 = [x / experiments for x in cumulative_avg_active_f1]
-    final_active_test_f1_list = [x / experiments for x in cumulative_active_test_f1_list]
-    final_weighted_active_f1_list = [x / experiments for x in cumulative_weighted_active_f1_list]
-    final_weighted_f1_train_active_list = [x / experiments for x in cumulative_weighted_f1_train_active_list]
-    final_random_sampling_f1_list = [x / experiments for x in cumulative_random_sampling_f1_list]
-    final_random_test_f1_list = [x / experiments for x in cumulative_random_test_f1_list]
-    final_weighted_random_f1_list = [x / experiments for x in cumulative_weighted_random_f1_list]
-    final_weighted_f1_train_random_list = [x / experiments for x in cumulative_weighted_f1_train_random_list]
+    final_results = {key: [x / experiments for x in cumulative_results[key]] for key in cumulative_results}
 
-    # Logging final results
-    log_file_path = "./log.txt"
-    with open(log_file_path, 'w') as f:
-        f.write(f"final_avg_active_f1: {final_avg_active_f1}\n")
-        f.write(f"final_active_test_f1: {final_active_test_f1_list}\n")
-        f.write(f"final_weighted_active_f1_test: {final_weighted_active_f1_list}\n")
-        f.write(f"final_weighted_f1_train_active_train: {final_weighted_f1_train_active_list}\n")
-        f.write(f"final_random_sampling_f1: {final_random_sampling_f1_list}\n")
-        f.write(f"final_random_test_f1: {final_random_test_f1_list}\n")
-        f.write(f"final_weighted_random_f1_test: {final_weighted_random_f1_list}\n")
-        f.write(f"final_weighted_f1_train_random_train: {final_weighted_f1_train_random_list}\n")
+    # Log final results to file
+    log_results(final_results, "./log.txt")
 
-    print(f"Results saved to {log_file_path}")
+    print(f"Results saved to ./log.txt")
 
+    # Plot F1 Scores
+    plot_f1_scores(
+        train_sizes, 
+        final_results['avg_active_f1'], 
+        final_results['random_sampling_f1'], 
+        final_results['active_test_f1'], 
+        final_results['random_test_f1'], 
+        final_results['weighted_active_f1'], 
+        final_results['weighted_random_f1'], 
+        final_results['weighted_train_active_f1'], 
+        final_results['weighted_train_random_f1']
+    )
 
+    # # Plot ROC Curve
+    # plt.figure()
+    # plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+    # plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+    # plt.xlabel("False Positive Rate")
+    # plt.ylabel("True Positive Rate")
+    # plt.title("ROC Curve")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
 
-
-    plot_f1_scores( 
-    train_sizes, 
-    final_avg_active_f1, 
-    final_random_sampling_f1_list, 
-    final_active_test_f1_list, 
-    final_random_test_f1_list, 
-    final_weighted_active_f1_list, 
-    final_weighted_random_f1_list, 
-    final_weighted_f1_train_active_list, 
-    final_weighted_f1_train_random_list
-)
-
-    # Plot Accuracies
-    #plot_accuracies(train_sizes, avg_active_model_accuracy_plot, avg_random_sampling_accuracy_plot, active_test_model_accuracy, random_test_sampling_accuracy, weighted_acc_active, weighted_acc_rand, weighted_acc_train_active, weighted_acc_train_random)
-
-    # Plot ROC Curve
-    plt.figure()
-    plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
-    plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("ROC Curve")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-    # Plot Precision-Recall Curve
-    plt.figure()
-    plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
-    plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
-    plt.xlabel("Recall")
-    plt.ylabel("Precision")
-    plt.title("Precision-Recall Curve")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    # # Plot Precision-Recall Curve
+    # plt.figure()
+    # plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+    # plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+    # plt.xlabel("Recall")
+    # plt.ylabel("Precision")
+    # plt.title("Precision-Recall Curve")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
 
     # Print weighted F1 scores for training set
     print("Weighted F1 Scores for Training Set:")
     for idx, train_size_percentage in enumerate(TRAIN_SIZE_RANGE):
         print(f"Train Size: {train_size_percentage*100:.0f}%")
-        print(f"  Active Learning Weighted F1: {weighted_f1_train_active[idx]:.4f}")
-        print(f"  Random Sampling Weighted F1: {weighted_f1_train_random[idx]:.4f}")
+        print(f"  Active Learning Weighted F1: {final_results['weighted_train_active_f1'][idx]:.4f}")
+        print(f"  Random Sampling Weighted F1: {final_results['weighted_train_random_f1'][idx]:.4f}")
         print()
+
+
+# Other functions (preprocess_and_vectorize, split_dataset_initial, split_pool_set, compute_gmm_log_weights_for_train,
+# active_learning, random_sampling, evaluate_active_learning, evaluate_random_sampling, plot_f1_scores, plot_roc_curve, 
+# plot_precision_recall_curve) should be implemented accordingly.
 
 if __name__ == "__main__":
     main()
