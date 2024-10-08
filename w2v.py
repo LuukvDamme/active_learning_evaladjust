@@ -20,6 +20,9 @@ import seaborn as sns
 import math
 from matplotlib.gridspec import GridSpec
 from scipy.stats import entropy
+from sklearn.metrics import precision_score, log_loss, f1_score, accuracy_score
+from sklearn.metrics import precision_score, log_loss, f1_score as sklearn_f1_score
+from sklearn.metrics import confusion_matrix
 
 
 np.seterr(over='ignore')  # Suppress overflow warnings
@@ -66,7 +69,7 @@ def split_pool_set(x_pool, y_pool, test_size, num):
 
 # Function to train the model
 def train_model(x_train, y_train):
-    classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
+    classifier = LogisticRegression(max_iter=1000)
     classifier.fit(x_train, y_train)
     return classifier
 
@@ -111,51 +114,44 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
     return x_train, y_train, unlabel, label
 
 
-def evaluate_model_with_cross_validation(x_train, y_train, n_splits=N_SPLITS):
-    classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
+def evaluate_model_with_cross_validation(x_train, y_train, n_splits=5):
+    classifier = LogisticRegression(max_iter=1000)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    accuracies, precision_scores, losses = [], [], []
-    tp, fp, tn, fn = 0, 0, 0, 0
-
+    
+    accuracies, precision_scores, f1_scores, losses = [], [], [], []
+    
     for train_index, val_index in skf.split(x_train, y_train):
         x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
         y_train_fold, y_val_fold = y_train[train_index], y_train[val_index]
 
+        # Train the model
         classifier.fit(x_train_fold, y_train_fold)
 
         # Predict and calculate probabilities
         y_pred = classifier.predict(x_val_fold)
-        y_prob = classifier.predict_proba(x_val_fold)
+        y_prob = classifier.predict_proba(x_val_fold)[:, 1]  # Probability for class 1
 
         # Ensure correct data types
         y_val_fold = np.array(y_val_fold, dtype=int)
         y_pred = np.array(y_pred, dtype=int)
 
-        # Compute TP, FP, TN, FN per fold
-        tp_fold = np.sum((y_pred == 1) & (y_val_fold == 1))
-        fp_fold = np.sum((y_pred == 1) & (y_val_fold == 0))
-        tn_fold = np.sum((y_pred == 0) & (y_val_fold == 0))
-        fn_fold = np.sum((y_pred == 0) & (y_val_fold == 1))
+        # Confusion matrix
+        tn, fp, fn, tp = confusion_matrix(y_val_fold, y_pred).ravel()
 
-        # Accumulate the values across folds
-        tp += tp_fold
-        fp += fp_fold
-        tn += tn_fold
-        fn += fn_fold
-
-        # Calculate per-fold accuracy, precision and loss
-        accuracies.append(classifier.score(x_val_fold, y_val_fold))
-        precision_scores.append(precision_score(y_val_fold, y_pred, average='weighted', zero_division=1))
+        # Calculate metrics manually
+        accuracy = (tp + tn) / (tp + tn + fp + fn)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        # Append results
+        accuracies.append(accuracy)
+        precision_scores.append(precision)
+        f1_scores.append(f1)
         losses.append(log_loss(y_val_fold, y_prob))
 
-    # Final manual calculations for overall precision, recall, F1 score
-    precision = tp / (tp + fp) if (tp + fp) != 0 else 0
-    recall = tp / (tp + fn) if (tp + fn) != 0 else 0
-    accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) != 0 else 0
-    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) != 0 else 0
-
-    return accuracy, f1, np.mean(precision_scores), np.mean(losses), classifier
-
+    # Return averaged results across folds
+    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), np.mean(losses), classifier
 
 # Function to evaluate the model on the test set
 def evaluate_model_on_test_set(classifier, x_test, y_test):
@@ -164,45 +160,36 @@ def evaluate_model_on_test_set(classifier, x_test, y_test):
     y_prob = classifier.predict_proba(x_test)
     return (
         accuracy,
-        f1_score(y_test, y_pred, average='weighted', zero_division=1),
-        precision_score(y_test, y_pred, average='weighted', zero_division=1),
+        f1_score(y_test, y_pred, zero_division=1),
+        precision_score(y_test, y_pred, zero_division=1),
         log_loss(y_test, y_prob),
         y_prob,
     )
 
 # Function to evaluate the model on the test set with weighted F1 score
-def evaluate_model_on_test_set_weighted(classifier, x_test, y_test, weights):
+def evaluate_model_on_test_set_weighted(classifier, x_test, y_test):
     y_pred = classifier.predict(x_test)
-    f1_weighted = f1_score(y_test, y_pred, average='weighted', zero_division=1, sample_weight=weights)
+    f1_weighted = f1_score(y_test, y_pred, zero_division=1)
     accuracy = classifier.score(x_test, y_test)
     y_prob = classifier.predict_proba(x_test)
     return (
         accuracy,
         f1_weighted,
-        precision_score(y_test, y_pred, average='weighted', zero_division=1),
+        precision_score(y_test, y_pred, zero_division=1),
         log_loss(y_test, y_prob),
         y_prob,
     )
-
-# Function to compute GMM-based weights on the test set
-def compute_gmm_weights(x_test, y_test):
-    gmm = GaussianMixture(n_components=2, random_state=42)
-    gmm.fit(x_test)
-    probs = gmm.predict_proba(x_test)
-    weights = np.zeros_like(y_test, dtype=float)
-    weights[y_test == 1] = probs[y_test == 1, 1]  # Weight for spam
-    weights[y_test == 0] = probs[y_test == 0, 0]  # Weight for ham
-    return weights
 
 # Function to compute GMM-based log-probabilities on the training set
 def compute_gmm_log_weights_for_train(x_train, y_train):
     # gmm = GaussianMixture(n_components=2, random_state=42)
     # gmm.fit(x_train)
+    print_debug_info('X_TRAIN;', x_train)
 
-    gmm = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(x_train)
+    gmm = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(x_train[:,0:2])
     
     # Compute the log likelihood for each sample
-    log_likelihoods = gmm.score_samples(x_train)
+    log_likelihoods = gmm.score_samples(x_train[:,0:2])
 
 
     weights=log_likelihoods
@@ -211,87 +198,36 @@ def compute_gmm_log_weights_for_train(x_train, y_train):
     return weights    # To assign weights based on class labels
 
 
-
-def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=N_SPLITS):
+def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=5):
+    classifier = LogisticRegression(max_iter=1000)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    accuracies, f1_scores, precision_scores, losses = [], [], [], []
-    all_y_probs = []
-    classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
-
-    tp, fp, tn, fn = 0, 0, 0, 0
-
+    
+    accuracies, precision_scores, f1_scores, losses = [], [], [], []
+    
     for train_index, val_index in skf.split(x_train, y_train):
         x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
         y_train_fold, y_val_fold = y_train[train_index], y_train[val_index]
-        #gmm_train_weights = weights[train_index]
-        val_weights = weights[val_index]
+        val_weights = weights[val_index]  # Use weights for the validation fold
 
-        # Fit the classifier with the GMM weights
+        # Train the model
         classifier.fit(x_train_fold, y_train_fold)
 
-        # Evaluate on the validation fold
+        # Predict and calculate probabilities
         y_pred = classifier.predict(x_val_fold)
-        y_prob = classifier.predict_proba(x_val_fold)
+        y_prob = classifier.predict_proba(x_val_fold)[:, 1]  # Probability for class 1
 
-        # Convert to numpy arrays and ensure correct data types
+        # Ensure correct data types
         y_val_fold = np.array(y_val_fold, dtype=int)
         y_pred = np.array(y_pred, dtype=int)
-        val_weights = np.array(val_weights, dtype=float)
 
-        # Compute TP, FP, TN, FN
-        tp_mask = (y_pred == 1) & (y_val_fold == 1)
-        fp_mask = (y_pred == 1) & (y_val_fold == 0)
-        tn_mask = (y_pred == 0) & (y_val_fold == 0)
-        fn_mask = (y_pred == 0) & (y_val_fold == 1)
+        # Calculate metrics per fold, applying sample weights where applicable
+        accuracies.append(accuracy_score(y_val_fold, y_pred, sample_weight=val_weights))  # Weighted accuracy
+        precision_scores.append(precision_score(y_val_fold, y_pred, zero_division=1, sample_weight=val_weights))  # Weighted precision
+        f1_scores.append(f1_score(y_val_fold, y_pred, sample_weight=val_weights))  # Weighted F1 score
+        losses.append(log_loss(y_val_fold, y_prob, sample_weight=val_weights))  # Weighted log loss
 
-        #sum the val_weights where tp_mask is true
-        tp_fold = np.sum(val_weights[tp_mask])
-        fp_fold = np.sum(val_weights[fp_mask])
-        tn_fold = np.sum(val_weights[tn_mask])
-        fn_fold = np.sum(val_weights[fn_mask])
-
-        tp += tp_fold
-        fp += fp_fold
-        tn += tn_fold
-        fn += fn_fold
-
-        # f1_scores.append(f1_score(y_val_fold, y_pred, average='weighted', zero_division=1, sample_weight=weights[val_index]))
-
-        accuracies.append(classifier.score(x_val_fold, y_val_fold))
-        precision_scores.append(precision_score(y_val_fold, y_pred, average='weighted', zero_division=1))
-
-        y_prob = classifier.predict_proba(x_val_fold)
-        losses.append(log_loss(y_val_fold, y_prob))
-        all_y_probs.append(y_prob)
-
-    sum_tp = tp
-    sum_fp = fp
-    sum_tn = tn
-    sum_fn = fn
-
-    # print('tp', sum_tp)
-    # print('fp', sum_fp)
-    # print('tn', sum_tn)
-    # print('fn', sum_fn)
-
-
-    precision=sum_tp/(sum_tp+sum_fp)
-    recall=sum_tp/(sum_tp+sum_fn)
-    accuracy=(sum_tp+sum_tn)/(sum_tp+sum_tn+sum_fp+sum_fn)
-    f1_score = (2 * precision * recall) / (precision + recall)
-
-    # print('precision', precision)
-    # print('recall', recall)
-    # print('f1', f1_score)
-
-
-    return (
-        accuracy,
-        f1_score,
-        np.mean(precision_scores),
-        np.mean(losses),
-        np.vstack(all_y_probs),  # Combine all the probabilities from different folds
-    )
+    # Return averaged results across folds
+    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), np.mean(losses), classifier
 
 
 # Function to plot ROC curve
@@ -550,7 +486,7 @@ def plot_joint_kde_simple(x_train, y_train):
 
 
 def main():
-    n_components=2
+    n_components=50
 
     # Ensure NLTK data is available
     nltk.download('punkt')
@@ -593,6 +529,8 @@ def main():
 
     dataset=new_dataset
 
+    random.shuffle(dataset)
+
 
 
     total_data_size = len(dataset)
@@ -608,7 +546,7 @@ def main():
     cumulative_weighted_random_f1_list = [0] * 72
     cumulative_weighted_f1_train_random_list = [0] * 72
 
-    experiments = 1
+    experiments = 10
     for _ in range(experiments):
         # Initialize lists for each experiment
         train_sizes = []
@@ -635,7 +573,7 @@ def main():
         unlabel, label, x_test, y_test = split_pool_set(x_pool, y_pool, TEST_SIZE, num)
 
         # Compute GMM-based weights for the test set
-        test_weights = compute_gmm_weights(x_test, y_test)
+        # test_weights = compute_gmm_weights(x_test, y_test)
         train_weights = compute_gmm_log_weights_for_train(unlabel, label)
 
         # print(f"Min weight: {train_weights.min()}, Max weight: {train_weights.max()}")
@@ -692,7 +630,7 @@ def main():
                     active_test_model_f1.append(active_test_f1)
 
                     # Compute weighted F1 for active learning
-                    _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test, test_weights)
+                    _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test)
                     weighted_active_f1.append(weighted_f1_active)
 
                     _, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(
@@ -704,7 +642,7 @@ def main():
                     rand_indices = np.random.choice(range(len(unlabel)), size=len(y_train_active), replace=False)
                     x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
                     y_rand_train = np.concatenate((y_train, label[rand_indices]))
-
+                    
                     avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
                     avg_random_sampling_f1_plot.append(rand_f1)
 
@@ -718,7 +656,7 @@ def main():
                     print(random_test_f1)
                     random_test_sampling_f1.append(random_test_f1)
 
-                    _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test, test_weights)
+                    _, weighted_f1_rand, _, _, _ = evaluate_model_on_test_set_weighted(classifier_rand, x_test, y_test)
                     weighted_random_f1.append(weighted_f1_rand)
 
                     _, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(
