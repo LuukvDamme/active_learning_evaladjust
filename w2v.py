@@ -74,13 +74,11 @@ def train_model(x_train, y_train):
     classifier.fit(x_train, y_train)
     return classifier
 
-# Function to perform active learning
+# Function to perform active learning and return y_train_indices
 def active_learning(x_train, y_train, unlabel, label, target_train_size, total_data_size):
     rounds = 0
-    # if len(y_train) < target_train_size:
-    #     print('smaller')
-    # else:
-    #     print('larger')
+    y_train_indices = np.arange(len(y_train))  # Track indices for the labeled set
+    
     while len(y_train) < target_train_size and rounds < ACTIVE_LEARNING_ROUNDS:
         classifier = train_model(x_train, y_train)
 
@@ -95,10 +93,16 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
         if len(uncertain_indices) == 0:
             break
 
+        # Update x_train, y_train, and their respective indices
         x_train = np.append(unlabel[uncertain_indices, :], x_train, axis=0)
         y_train = np.append(label[uncertain_indices], y_train)
         unlabel = np.delete(unlabel, uncertain_indices, axis=0)
         label = np.delete(label, uncertain_indices)
+
+        # Track the indices for the newly added samples
+        new_indices = np.arange(len(y_train) - len(uncertain_indices), len(y_train))
+        y_train_indices = np.append(new_indices, y_train_indices)
+
         rounds += 1 
         current_train_percentage = (len(y_train) / total_data_size) * 100
 
@@ -112,47 +116,10 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
         print(f"Label ratios - Spam: {spam_ratio:.2f}%, Ham: {ham_ratio:.2f}%")
         print("###########################################################################")
 
-    return x_train, y_train, unlabel, label
+    # Return x_train, y_train, unlabel, label, and y_train_indices for further processing
+    return x_train, y_train, unlabel, label, y_train_indices
 
 
-def evaluate_model_with_cross_validation(x_train, y_train, n_splits=5):
-    classifier = LogisticRegression(max_iter=1000)
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    
-    accuracies, precision_scores, f1_scores, losses = [], [], [], []
-    
-    for train_index, val_index in skf.split(x_train, y_train):
-        x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
-        y_train_fold, y_val_fold = y_train[train_index], y_train[val_index]
-
-        # Train the model
-        classifier.fit(x_train_fold, y_train_fold)
-
-        # Predict and calculate probabilities
-        y_pred = classifier.predict(x_val_fold)
-        y_prob = classifier.predict_proba(x_val_fold)[:, 1]  # Probability for class 1
-
-        # Ensure correct data types
-        y_val_fold = np.array(y_val_fold, dtype=int)
-        y_pred = np.array(y_pred, dtype=int)
-
-        # Confusion matrix
-        tn, fp, fn, tp = confusion_matrix(y_val_fold, y_pred).ravel()
-
-        # Calculate metrics manually
-        accuracy = (tp + tn) / (tp + tn + fp + fn)
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        
-        # Append results
-        accuracies.append(accuracy)
-        precision_scores.append(precision)
-        f1_scores.append(f1)
-        losses.append(log_loss(y_val_fold, y_prob))
-
-    # Return averaged results across folds
-    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), np.mean(losses), classifier
 
 # Function to evaluate the model on the test set
 def evaluate_model_on_test_set(classifier, x_test, y_test):
@@ -182,7 +149,7 @@ def evaluate_model_on_test_set_weighted(classifier, x_test, y_test):
     )
 
 # Function to compute GMM-based log-probabilities on the training set
-def compute_gmm_log_weights_for_train(x_train, y_train):
+def compute_kde_log_weights_for_train(x_train, y_train):
     # gmm = GaussianMixture(n_components=2, random_state=42)
     # gmm.fit(x_train)
     # print_debug_info('X_TRAIN;', x_train)
@@ -202,9 +169,12 @@ def compute_gmm_log_weights_for_train(x_train, y_train):
 def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=5):
     classifier = LogisticRegression(max_iter=1000)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    
-    accuracies, precision_scores, f1_scores, losses = [], [], [], []
-    
+
+    accuracies, precision_scores, losses = [], [], []
+    all_y_val = []
+    all_y_pred = []
+    all_val_weights = []
+
     for train_index, val_index in skf.split(x_train, y_train):
         x_train_fold, x_val_fold = x_train[train_index], x_train[val_index]
         y_train_fold, y_val_fold = y_train[train_index], y_train[val_index]
@@ -221,14 +191,27 @@ def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, 
         y_val_fold = np.array(y_val_fold, dtype=int)
         y_pred = np.array(y_pred, dtype=int)
 
-        # Calculate metrics per fold, applying sample weights where applicable
+        # Collect all predictions and ground truth
+        all_y_val.extend(y_val_fold)
+        all_y_pred.extend(y_pred)
+        all_val_weights.extend(val_weights)
+
+        # Calculate metrics per fold
         accuracies.append(accuracy_score(y_val_fold, y_pred, sample_weight=val_weights))  # Weighted accuracy
         precision_scores.append(precision_score(y_val_fold, y_pred, zero_division=1, sample_weight=val_weights))  # Weighted precision
-        f1_scores.append(f1_score(y_val_fold, y_pred, sample_weight=val_weights))  # Weighted F1 score
         losses.append(log_loss(y_val_fold, y_prob, sample_weight=val_weights))  # Weighted log loss
 
-    # Return averaged results across folds
-    return np.mean(accuracies), np.mean(f1_scores), np.mean(precision_scores), np.mean(losses), classifier
+    # Convert collected lists to numpy arrays
+    all_y_val = np.array(all_y_val)
+    all_y_pred = np.array(all_y_pred)
+    all_val_weights = np.array(all_val_weights)
+
+    # Calculate final F1 score using the entire validation set
+    f1_final = f1_score(all_y_val, all_y_pred, sample_weight=all_val_weights)
+
+    # Return averaged results across folds and the final F1 score
+    return np.mean(accuracies), f1_final, np.mean(precision_scores), np.mean(losses), classifier
+
 
 
 # Function to plot ROC curve
@@ -267,11 +250,6 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
 
     # Before plotting, check the values of x and y
     print("train_sizes_percent (x):", train_sizes_percent)
-    # print("weighted_f1_train_active (y):", weighted_f1_train_active)
-    
-    # # You can also print their types and lengths if they're supposed to be lists or arrays
-    # print("Type of train_sizes_percent:", type(train_sizes_percent))
-    # print("Type of weighted_f1_train_active:", type(weighted_f1_train_active))
     
     if isinstance(train_sizes_percent, list):
         print("Length of train_sizes_percent:", len(train_sizes_percent))
@@ -286,27 +264,6 @@ def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1
     # plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
     plt.plot(train_sizes_percent, weighted_f1_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
     # plt.plot(train_sizes_percent, weighted_f1_train_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
-    
-
-    # # Smooth all the lines
-    # x_smooth, y_smooth1 = smooth_line(train_sizes_percent, avg_active_model_f1_plot)
-    # _, y_smooth2 = smooth_line(train_sizes_percent, avg_random_sampling_f1_plot)
-    # _, y_smooth3 = smooth_line(train_sizes_percent, active_test_model_f1)
-    # _, y_smooth4 = smooth_line(train_sizes_percent, random_test_sampling_f1)
-    # _, y_smooth5 = smooth_line(train_sizes_percent, weighted_active_f1)
-    # _, y_smooth6 = smooth_line(train_sizes_percent, weighted_random_f1)
-    # _, y_smooth7 = smooth_line(train_sizes_percent, weighted_f1_train_active)
-    # _, y_smooth8 = smooth_line(train_sizes_percent, weighted_f1_train_random)
-
-    # # Plot the smoothed lines
-    # plt.plot(x_smooth, y_smooth1, label="Active Learning CV", color=colors["Active Learning CV"])
-    # plt.plot(x_smooth, y_smooth2, label="Random Sampling CV", color=colors["Random Sampling CV"])
-    # plt.plot(x_smooth, y_smooth3, label="Active Learning test", color=colors["Active Learning test"])
-    # plt.plot(x_smooth, y_smooth4, label="Random Sampling test", color=colors["Random Sampling test"])
-    # plt.plot(x_smooth, y_smooth5, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
-    # plt.plot(x_smooth, y_smooth6, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
-    # plt.plot(x_smooth, y_smooth7, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
-    # plt.plot(x_smooth, y_smooth8, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
 
     plt.xlabel("Train Size (%)")
     plt.ylabel("F1 Score")
@@ -503,10 +460,13 @@ def plot_joint_kde_simple(x_train, y_train, save_dir="plots", file_name="joint_k
     print(f"Saved simple KDE plot to {save_path}")
 
 
-def run_experiment(dataset, initial_train_size, total_data_size, experiments):
+def run_experiment(dataset, total_data_size, experiments):
     """
     Runs multiple cycles of experiments and aggregates the results.
     """
+
+    initial_train_size = int(INITIAL_TRAIN_SIZE_PERCENTAGE * total_data_size)
+    
     cumulative_results = {
         'avg_active_f1': [0] * len(TRAIN_SIZE_RANGE),
         'random_sampling_f1': [0] * len(TRAIN_SIZE_RANGE),
@@ -520,7 +480,7 @@ def run_experiment(dataset, initial_train_size, total_data_size, experiments):
     
     # Run multiple experiments
     for _ in range(experiments):
-        train_sizes, results = run_training_cycle(dataset, initial_train_size, total_data_size)
+        train_sizes, results, x_test, y_test, classifier_active, classifier_rand = run_training_cycle(dataset, initial_train_size, total_data_size)
 
         # Aggregate the results
         for key in cumulative_results:
@@ -530,7 +490,7 @@ def run_experiment(dataset, initial_train_size, total_data_size, experiments):
     for key in cumulative_results:
         cumulative_results[key] = [x / experiments for x in cumulative_results[key]]
     
-    return train_sizes, cumulative_results
+    return train_sizes, cumulative_results, x_test, y_test, classifier_active, classifier_rand
 
 
 def run_training_cycle(dataset, initial_train_size, total_data_size):
@@ -561,11 +521,19 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
     # Assuming x_train and y_train are already defined
     plot_joint_kde(x_train, y_train, save_dir="plots", file_name="initial_joint_kde")
     plot_joint_kde_simple(x_train, y_train, save_dir="plots", file_name="initial_joint_kde_simple")
+    plot_joint_kde(unlabel, label, save_dir="plots", file_name="full_joint_kde")
+    plot_joint_kde_simple(unlabel, label, save_dir="plots", file_name="full_joint_kde_simple")
 
 
 
     # Compute GMM-based weights for the unlabelled data
-    train_weights = compute_gmm_log_weights_for_train(unlabel, label)
+    train_weights = compute_kde_log_weights_for_train(unlabel, label)
+    # Get the shape of the existing array
+    shape = train_weights.shape
+
+    # Create a new array of ones with the same shape
+    dummy_weights_whole_set = np.ones(shape)
+    
 
     runs = 1  # Number of runs for each train size percentage
     for train_size_percentage in TRAIN_SIZE_RANGE:
@@ -584,27 +552,47 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
         
                 
                 # Active learning process
-                x_train_active, y_train_active, unlabel_active, label_active = active_learning(
+                x_train_active, y_train_active, _, _, y_train_indices = active_learning(
                     x_train.copy(), y_train.copy(), unlabel.copy(), label.copy(), train_size, total_data_size)
                 
-                if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.95), (19.95, 20.95), 
-                                                                                 (29.95, 30.95), (39.95, 40.95),
-                                                                                 (49.95, 50.95), (59.95, 60.95),
-                                                                                 (69.95, 70.95), (79.95, 80.95),
-                                                                                 (89.95, 90.95), (99.95, 100.95)]):
+                if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.05), (19.95, 20.05), 
+                                                                                 (29.95, 30.05), (39.95, 40.05),
+                                                                                 (49.95, 50.05), (59.95, 60.05),
+                                                                                 (69.95, 70.05), (79.95, 80.05),
+                                                                                 (89.95, 90.05), (99.95, 100.05)]):
                     plot_joint_kde(x_train_active, y_train_active, save_dir="plots", file_name=f"joint_kde_{train_size_percentage:.2f}")
                     plot_joint_kde_simple(x_train_active, y_train_active, save_dir="plots", file_name=f"joint_kde_simple_{train_size_percentage:.2f}")
   
 
                 # Compute log weights for active learning
-                train_weights_active_loop = compute_gmm_log_weights_for_train(x_train_active, y_train_active)
-                train_weights_active = np.exp(train_weights[:len(y_train_active)] - train_weights_active_loop)
+                train_weights_active_loop = compute_kde_log_weights_for_train(x_train_active, y_train_active)
+
+                train_weights_active = np.exp(train_weights[y_train_indices] - train_weights_active_loop)
+
+                # train_weights_active = np.exp(train_weights[:len(y_train_active)] - train_weights_active_loop)
+
+                # Get the shape of the existing array
+                shape = train_weights_active.shape
+
+                # Save full array to file without truncation
+                with open('./weights_loop.txt', 'a') as file:
+                    file.write(np.array2string(train_weights_active, threshold=np.inf))
+                    file.write('\n\n')
+
+                # Create a new array of ones with the same shape
+                dummy_weights = np.ones(shape)
 
                 # Evaluate active learning model
-                avg_accuracy, active_f1, _, _, _ = evaluate_model_with_cross_validation(x_train_active, y_train_active)
-                avg_active_model_f1_plot.append(active_f1)
 
                 classifier_active = train_model(x_train_active, y_train_active)
+
+                _, active_f1, _, _, _ = evaluate_model_on_train_set_weighted(
+                    classifier_active, x_train_active, y_train_active, dummy_weights
+                )
+                avg_active_model_f1_plot.append(active_f1)
+
+                print(active_f1)
+
                 test_accuracy, active_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_active, x_test, y_test)
                 active_test_model_f1.append(active_test_f1)
 
@@ -622,10 +610,11 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
                 x_rand_train = np.concatenate((x_train, unlabel[rand_indices]))
                 y_rand_train = np.concatenate((y_train, label[rand_indices]))
 
-                avg_accuracy, rand_f1, _, _, _ = evaluate_model_with_cross_validation(x_rand_train, y_rand_train)
-                avg_random_sampling_f1_plot.append(rand_f1)
 
                 classifier_rand = train_model(x_rand_train, y_rand_train)
+                avg_accuracy, rand_f1, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, dummy_weights_whole_set[:len(y_rand_train)])
+                avg_random_sampling_f1_plot.append(rand_f1)
+
                 _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
                 random_test_sampling_f1.append(random_test_f1)
 
@@ -665,7 +654,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
         'weighted_train_random_f1': weighted_f1_train_random_list,
     }
     
-    return train_sizes, results
+    return train_sizes, results, x_test, y_test, classifier_active, classifier_rand
 
 def log_results(results, log_file_path):
     """
@@ -677,10 +666,14 @@ def log_results(results, log_file_path):
 
 
 def main():
+    # Overwrite the file at the start of the script to reset it
+    with open('./weights_loop.txt', 'w') as file:
+        file.write('')  # Writing an empty string will clear the file
+
     """
     Main function to process the dataset, perform PCA, and run experiments on active learning and random sampling.
     """
-    n_components = 5
+    n_components = 50
 
     # Ensure NLTK data is available
     nltk.download('punkt')
@@ -715,36 +708,49 @@ def main():
 
     # Setup train/test size parameters
     total_data_size = len(dataset)
-    initial_train_size = int(INITIAL_TRAIN_SIZE_PERCENTAGE * total_data_size)
-
-    # Initialize cumulative lists for results
-    num_metrics = 72  # HARDCODED: Should match the actual number of metrics
-    cumulative_results = {
-        'avg_active_f1': [0] * num_metrics,
-        'active_test_f1': [0] * num_metrics,
-        'weighted_active_f1': [0] * num_metrics,
-        'weighted_train_active_f1': [0] * num_metrics,
-        'random_sampling_f1': [0] * num_metrics,
-        'random_test_f1': [0] * num_metrics,
-        'weighted_random_f1': [0] * num_metrics,
-        'weighted_train_random_f1': [0] * num_metrics,
-    }
 
     experiments = 1
+    cumulative_results = {key: [] for key in ['avg_active_f1', 'random_sampling_f1', 'active_test_f1', 'random_test_f1', 'weighted_active_f1', 'weighted_random_f1', 'weighted_train_active_f1', 'weighted_train_random_f1']}
+    successful_experiments = 0  # Counter for successful experiments
     for _ in range(experiments):
-        train_sizes, results = run_experiment(dataset, initial_train_size, total_data_size, experiments)
+        try:
+            # Run experiment
+            train_sizes, results, x_test, y_test, classifier_active, classifier_rand = run_experiment(dataset, total_data_size, experiments)
 
-        # Update cumulative results
-        for key in cumulative_results:
-            cumulative_results[key] = [x + y for x, y in zip(cumulative_results[key], results[key])]
+            # Check if any results contain NaN values
+            if any(np.isnan(val) for result in results.values() for val in result):
+                print("NaN value found in results, skipping this iteration.")
+                continue  # Skip the current experiment if NaN is found
 
-    # Final averages after all experiments
-    final_results = {key: [x / experiments for x in cumulative_results[key]] for key in cumulative_results}
+            # Store the results of the current experiment
+            for key in cumulative_results:
+                cumulative_results[key].append(results[key])
+            
+            # Increment successful experiments counter
+            successful_experiments += 1
+
+        except ValueError as e:
+            print(f"ValueError encountered during the experiment: {e}")
+            continue  # Continue to the next experiment
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            continue  # Continue to the next experiment
+
+    # Final averages after all successful experiments
+    if successful_experiments > 0:
+        final_results = {key: np.mean(cumulative_results[key], axis=0).tolist() for key in cumulative_results}
+    else:
+        print("No successful experiments were conducted.")
+        final_results = {}  # Or handle as needed
 
     # Log final results to file
     log_results(final_results, "./log.txt")
 
     print(f"Results saved to ./log.txt")
+
+    print('Number of successful experiments:')
+    print(successful_experiments)
 
     # Plot F1 Scores
     plot_f1_scores(
@@ -760,26 +766,26 @@ def main():
     )
 
     # # Plot ROC Curve
-    # plt.figure()
-    # plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
-    # plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
-    # plt.xlabel("False Positive Rate")
-    # plt.ylabel("True Positive Rate")
-    # plt.title("ROC Curve")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.show()
+    plt.figure()
+    plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+    plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
     # # Plot Precision-Recall Curve
-    # plt.figure()
-    # plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
-    # plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
-    # plt.xlabel("Recall")
-    # plt.ylabel("Precision")
-    # plt.title("Precision-Recall Curve")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.show()
+    plt.figure()
+    plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+    plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision-Recall Curve")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
     # Print weighted F1 scores for training set
     print("Weighted F1 Scores for Training Set:")
@@ -790,7 +796,7 @@ def main():
         print()
 
 
-# Other functions (preprocess_and_vectorize, split_dataset_initial, split_pool_set, compute_gmm_log_weights_for_train,
+# Other functions (preprocess_and_vectorize, split_dataset_initial, split_pool_set, compute_kde_log_weights_for_train,
 # active_learning, random_sampling, evaluate_active_learning, evaluate_random_sampling, plot_f1_scores, plot_roc_curve, 
 # plot_precision_recall_curve) should be implemented accordingly.
 
