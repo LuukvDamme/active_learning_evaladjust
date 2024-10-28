@@ -120,7 +120,6 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
     return x_train, y_train, unlabel, label, y_train_indices
 
 
-
 # Function to evaluate the model on the test set
 def evaluate_model_on_test_set(classifier, x_test, y_test):
     accuracy = classifier.score(x_test, y_test)
@@ -322,41 +321,6 @@ def plot_gmm_ellipsoids(gmm, X, ax=None, label='GMM Components'):
     ax.legend()
     plt.show()
 
-
-def plot_accuracies(train_sizes, active_learning_cv_accuracy, random_sampling_cv_accuracy, active_test_accuracy, random_test_accuracy, weighted_acc_active, weighted_acc_rand, weighted_acc_train_active, weighted_acc_tran_random):
-    plt.figure()
-
-    train_sizes_percent = np.array(train_sizes) * 100
-
-    # Define a set of distinct colors
-    colors = {
-        "Active Learning CV": "#1f77b4",       # Blue
-        "Random Sampling CV": "#8c564b",  # Brown
-        "Active Learning test": "#2ca02c",     # Green
-        "Random Sampling test": "#d62728",     # Red
-        "Weighted Active Learning test": "#2ca02c", # green
-        "Weighted Random Sampling test": "#d62728",       # red
-        "Weighted Active Learning train": "#1f77b4", # blue
-        "Weighted Random Sampling train": "#8c564b"       # brown
-    }
-
-    plt.plot(train_sizes_percent, active_learning_cv_accuracy, label="Active Learning CV", color=colors["Active Learning CV"])
-    plt.plot(train_sizes_percent, random_sampling_cv_accuracy, label="Random Sampling CV", color=colors["Random Sampling CV"])
-    plt.plot(train_sizes_percent, active_test_accuracy, label="Active Learning test", color=colors["Active Learning test"])
-    plt.plot(train_sizes_percent, random_test_accuracy, label="Random Sampling test", color=colors["Random Sampling test"])
-    plt.plot(train_sizes_percent, weighted_acc_active, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
-    plt.plot(train_sizes_percent, weighted_acc_rand, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
-    plt.plot(train_sizes_percent, weighted_acc_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
-    plt.plot(train_sizes_percent, weighted_acc_tran_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
-    
-    plt.xlabel("Train Size (%)")
-    plt.ylabel("Accuracy")
-    plt.title("Accuracy vs. Train Size")
-    plt.legend()
-    plt.grid(True)
-
-
-    plt.show()
 
 
 def print_debug_info(name, data):
@@ -664,8 +628,16 @@ def log_results(results, log_file_path):
         for key, values in results.items():
             f.write(f"{key}: {values}\n")
 
+def log_results_append(results, log_file_path):
+    """
+    Logs the results to a specified file.
+    """
+    with open(log_file_path, 'a') as f:
+        for key, values in results.items():
+            f.write(f"{key}: {values}\n")
+        f.write('\n\n')
 
-def main():
+def main(plot_results=True):
     # Overwrite the file at the start of the script to reset it
     with open('./weights_loop.txt', 'w') as file:
         file.write('')  # Writing an empty string will clear the file
@@ -752,40 +724,43 @@ def main():
     print('Number of successful experiments:')
     print(successful_experiments)
 
-    # Plot F1 Scores
-    plot_f1_scores(
-        train_sizes, 
-        final_results['avg_active_f1'], 
-        final_results['random_sampling_f1'], 
-        final_results['active_test_f1'], 
-        final_results['random_test_f1'], 
-        final_results['weighted_active_f1'], 
-        final_results['weighted_random_f1'], 
-        final_results['weighted_train_active_f1'], 
-        final_results['weighted_train_random_f1']
-    )
+    if plot_results:
+        # Plot F1 Scores
+        plot_f1_scores(
+            train_sizes, 
+            final_results['avg_active_f1'], 
+            final_results['random_sampling_f1'], 
+            final_results['active_test_f1'], 
+            final_results['random_test_f1'], 
+            final_results['weighted_active_f1'], 
+            final_results['weighted_random_f1'], 
+            final_results['weighted_train_active_f1'], 
+            final_results['weighted_train_random_f1']
+        )
 
-    # # Plot ROC Curve
-    plt.figure()
-    plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
-    plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.title("ROC Curve")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+        # Plot ROC Curve
+        plt.figure()
+        plot_roc_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+        plot_roc_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.title("ROC Curve")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
-    # # Plot Precision-Recall Curve
-    plt.figure()
-    plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
-    plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
-    plt.xlabel("Recall")
-    plt.ylabel("Precision")
-    plt.title("Precision-Recall Curve")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+        # Plot Precision-Recall Curve
+        plt.figure()
+        plot_precision_recall_curve(y_test, classifier_active.predict_proba(x_test)[:, 1], "Active Learning")
+        plot_precision_recall_curve(y_test, classifier_rand.predict_proba(x_test)[:, 1], "Random Sampling")
+        plt.xlabel("Recall")
+        plt.ylabel("Precision")
+        plt.title("Precision-Recall Curve")
+        plt.legend()
+        plt.grid(True)
+        # plt.show()
+
+    log_results_append(final_results, 'final_results.txt')
 
     # Print weighted F1 scores for training set
     print("Weighted F1 Scores for Training Set:")
@@ -796,9 +771,5 @@ def main():
         print()
 
 
-# Other functions (preprocess_and_vectorize, split_dataset_initial, split_pool_set, compute_kde_log_weights_for_train,
-# active_learning, random_sampling, evaluate_active_learning, evaluate_random_sampling, plot_f1_scores, plot_roc_curve, 
-# plot_precision_recall_curve) should be implemented accordingly.
-
 if __name__ == "__main__":
-    main()
+    main(plot_results=True)  # You can pass False if you don't want to plot
