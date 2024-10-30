@@ -7,10 +7,12 @@ import w2v
 metrics = defaultdict(list)
 
 # Read the file and extract metric values
-with open("final_results_1000.txt", "r") as file:
+with open("final_results.txt", "r") as file:
     for line in file:
         # Find the metric name and values
         match = re.match(r"(\w+): \[(.*?)\]", line.strip())
+
+        
         if match:
             metric_name = match.group(1)
             # Convert the values from string to list of floats
@@ -21,7 +23,9 @@ with open("final_results_1000.txt", "r") as file:
 averaged_metrics = {name: [mean(values) for values in zip(*data)] for name, data in metrics.items()}
 
 # Generate train_sizes based on the length of any of the averaged metric lists
-train_sizes = list(range(1, len(next(iter(averaged_metrics.values()))) + 1))
+train_sizes = [size / 100 for size in range(1, len(next(iter(averaged_metrics.values()))) + 1)]
+
+
 
 # Plot using the plot_f1_scores function
 w2v.plot_f1_scores(

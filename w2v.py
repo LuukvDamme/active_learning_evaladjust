@@ -29,10 +29,11 @@ import os
 np.seterr(over='ignore')  # Suppress overflow warnings
 
 # Constants
-DATA_FILE = 'SMSSpamCollection'
+# DATA_FILE = 'SMSSpamCollection'
+DATA_FILE = 'Sentiment_reformat'
 INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01
 TRAIN_SIZE_RANGE = np.arange(0.02, 0.74, 0.01)
-ACTIVE_LEARNING_ROUNDS = 10
+ACTIVE_LEARNING_ROUNDS = 1
 N_SPLITS = 5
 TEST_SIZE = 0.25  # The size of the test set as a fraction of the pool set
 
@@ -74,50 +75,44 @@ def train_model(x_train, y_train):
     classifier.fit(x_train, y_train)
     return classifier
 
-# Function to perform active learning and return y_train_indices
 def active_learning(x_train, y_train, unlabel, label, target_train_size, total_data_size):
-    rounds = 0
-    y_train_indices = np.arange(len(y_train))  # Track indices for the labeled set
-    
-    while len(y_train) < target_train_size and rounds < ACTIVE_LEARNING_ROUNDS:
+    # Start by tracking indices in the initial labeled set
+    y_train_indices = np.arange(len(y_train))
+    # print("Initial y_train_indices:", y_train_indices)
+
+    while len(y_train) < target_train_size:
         classifier = train_model(x_train, y_train)
 
         if len(unlabel) == 0:
             print("No more samples to select from. Stopping active learning.")
             break
         
-        y_probab = classifier.predict_proba(unlabel)[:, 1]  # Probability of class 1
-        uncertainties = np.abs(y_probab - 0.5)  # Uncertainty is highest when probability is close to 0.5
-        uncertain_indices = np.argsort(uncertainties)[:min(len(uncertainties), target_train_size - len(y_train))]  # Select most uncertain samples
+        # Model predictions and uncertainty calculations
+        y_probab = classifier.predict_proba(unlabel)[:, 1]
+        uncertainties = np.abs(y_probab - 0.5)
+        uncertain_indices = np.argsort(uncertainties)[:min(len(uncertainties), target_train_size - len(y_train))]
 
         if len(uncertain_indices) == 0:
             break
 
-        # Update x_train, y_train, and their respective indices
+        # Adding uncertain samples to x_train and y_train
         x_train = np.append(unlabel[uncertain_indices, :], x_train, axis=0)
         y_train = np.append(label[uncertain_indices], y_train)
         unlabel = np.delete(unlabel, uncertain_indices, axis=0)
         label = np.delete(label, uncertain_indices)
 
-        # Track the indices for the newly added samples
-        new_indices = np.arange(len(y_train) - len(uncertain_indices), len(y_train))
-        y_train_indices = np.append(new_indices, y_train_indices)
+        # Use uncertain_indices directly as the new indices from the unlabel set
+        # print("\nIndices of newly selected samples from unlabel:", uncertain_indices)
+        
+        # Append the original indices of new samples from unlabel to y_train_indices
+        y_train_indices = np.append(uncertain_indices, y_train_indices)
+        # print("Updated y_train_indices:", y_train_indices)
 
-        rounds += 1 
         current_train_percentage = (len(y_train) / total_data_size) * 100
+        # print(f"Total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
 
-        # Calculate and print the ratio of each label
-        spam_count = np.sum(y_train == 1)
-        ham_count = np.sum(y_train == 0)
-        spam_ratio = spam_count / len(y_train) * 100
-        ham_ratio = ham_count / len(y_train) * 100
-
-        print(f"Round {rounds}: Added {len(uncertain_indices)} samples, total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
-        print(f"Label ratios - Spam: {spam_ratio:.2f}%, Ham: {ham_ratio:.2f}%")
-        print("###########################################################################")
-
-    # Return x_train, y_train, unlabel, label, and y_train_indices for further processing
     return x_train, y_train, unlabel, label, y_train_indices
+
 
 
 # Function to evaluate the model on the test set
