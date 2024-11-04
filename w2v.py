@@ -29,8 +29,8 @@ import os
 np.seterr(over='ignore')  # Suppress overflow warnings
 
 # Constants
-# DATA_FILE = 'SMSSpamCollection'
-DATA_FILE = 'Sentiment_reformat'
+DATA_FILE = 'SMSSpamCollection'
+# DATA_FILE = 'Sentiment_reformat'
 INITIAL_TRAIN_SIZE_PERCENTAGE = 0.01
 TRAIN_SIZE_RANGE = np.arange(0.02, 0.74, 0.01)
 ACTIVE_LEARNING_ROUNDS = 1
@@ -76,9 +76,17 @@ def train_model(x_train, y_train):
     return classifier
 
 def active_learning(x_train, y_train, unlabel, label, target_train_size, total_data_size):
-    # Start by tracking indices in the initial labeled set
+    # Initialize tracking indices for y_train
     y_train_indices = np.arange(len(y_train))
-    # print("Initial y_train_indices:", y_train_indices)
+
+    def get_most_uncertain_samples(probs, num_samples):
+        uncertainties = np.abs(probs - 0.5)
+        return np.argsort(uncertainties)[:num_samples]
+
+    def add_samples(x_train, y_train, unlabel, label, indices):
+        x_train = np.vstack((unlabel[indices], x_train))
+        y_train = np.hstack((label[indices], y_train))
+        return x_train, y_train
 
     while len(y_train) < target_train_size:
         classifier = train_model(x_train, y_train)
@@ -86,30 +94,24 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
         if len(unlabel) == 0:
             print("No more samples to select from. Stopping active learning.")
             break
-        
-        # Model predictions and uncertainty calculations
+
+        # Predict probabilities for the unlabeled set and select top uncertain samples
         y_probab = classifier.predict_proba(unlabel)[:, 1]
-        uncertainties = np.abs(y_probab - 0.5)
-        uncertain_indices = np.argsort(uncertainties)[:min(len(uncertainties), target_train_size - len(y_train))]
+        num_samples_to_add = min(5, target_train_size - len(y_train))
+        uncertain_indices = get_most_uncertain_samples(y_probab, num_samples_to_add)
 
-        if len(uncertain_indices) == 0:
-            break
-
-        # Adding uncertain samples to x_train and y_train
-        x_train = np.append(unlabel[uncertain_indices, :], x_train, axis=0)
-        y_train = np.append(label[uncertain_indices], y_train)
+        # Add selected samples to training data
+        x_train, y_train = add_samples(x_train, y_train, unlabel, label, uncertain_indices)
+        
+        # Update the unlabeled data and labels by removing added samples
         unlabel = np.delete(unlabel, uncertain_indices, axis=0)
         label = np.delete(label, uncertain_indices)
-
-        # Use uncertain_indices directly as the new indices from the unlabel set
-        # print("\nIndices of newly selected samples from unlabel:", uncertain_indices)
         
-        # Append the original indices of new samples from unlabel to y_train_indices
-        y_train_indices = np.append(uncertain_indices, y_train_indices)
-        # print("Updated y_train_indices:", y_train_indices)
+        # Track indices of newly labeled samples
+        y_train_indices = np.hstack((uncertain_indices, y_train_indices))
 
-        current_train_percentage = (len(y_train) / total_data_size) * 100
-        # print(f"Total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
+    current_train_percentage = (len(y_train) / total_data_size) * 100
+    print(f"Total train size: {len(y_train)}, data used: {current_train_percentage:.2f}%")
 
     return x_train, y_train, unlabel, label, y_train_indices
 
