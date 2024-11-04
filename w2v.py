@@ -227,46 +227,36 @@ def smooth_line(x, y, num_points=300):
     y_smooth = spline(x_smooth)
     return x_smooth, y_smooth
 
-def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, random_test_sampling_f1, weighted_active_f1, weighted_random_f1, weighted_f1_train_active, weighted_f1_train_random):
-    plt.figure()
-
-    train_sizes_percent = np.array(train_sizes) * 100
-
-    # Define a set of distinct colors
-    colors = {
-        "Active Learning CV": "#1f77b4",       # Blue
-        "Random Sampling CV": "#8c564b",  # Brown
-        "Active Learning test": "#2ca02c",     # Green
-        "Random Sampling test": "#d62728",     # Red
-        "Weighted Active Learning test": "#2ca02c", # green
-        "Weighted Random Sampling test": "#d62728",       # red
-        "Weighted Active Learning train": "#1f77b4", # blue
-        "Weighted Random Sampling train": "#8c564b"       # brown
-    }
-
-    # Before plotting, check the values of x and y
-    print("train_sizes_percent (x):", train_sizes_percent)
+def plot_f1_scores(train_sizes, avg_active_model_f1_plot, avg_random_sampling_f1_plot, active_test_model_f1, 
+                   random_test_sampling_f1, weighted_active_f1, weighted_random_f1, 
+                   weighted_f1_train_active, weighted_f1_train_random):
     
-    if isinstance(train_sizes_percent, list):
-        print("Length of train_sizes_percent:", len(train_sizes_percent))
-    if isinstance(weighted_f1_train_active, list):
-        print("Length of weighted_f1_train_active:", len(weighted_f1_train_active))
-
-    plt.plot(train_sizes_percent, avg_active_model_f1_plot, label="Active Learning CV", color=colors["Active Learning CV"])
-    plt.plot(train_sizes_percent, avg_random_sampling_f1_plot, label="Random Sampling CV", color=colors["Random Sampling CV"])
-    plt.plot(train_sizes_percent, active_test_model_f1, label="Active Learning test", color=colors["Active Learning test"])
-    plt.plot(train_sizes_percent, random_test_sampling_f1, label="Random Sampling test", color=colors["Random Sampling test"])
-    # plt.plot(train_sizes_percent, weighted_active_f1, label="Weighted Active Learning test", color=colors["Weighted Active Learning test"], linestyle='--')
-    # plt.plot(train_sizes_percent, weighted_random_f1, label="Weighted Random Sampling test", color=colors["Weighted Random Sampling test"], linestyle='--')
-    plt.plot(train_sizes_percent, weighted_f1_train_active, label="Weighted Active Learning train", color=colors["Weighted Active Learning train"], linestyle='--')
-    # plt.plot(train_sizes_percent, weighted_f1_train_random, label="Weighted Random Sampling train", color=colors["Weighted Random Sampling train"], linestyle='--')
-
+    # Convert train sizes to percentages
+    train_sizes_percent = np.array(train_sizes) * 100
+    
+    # Plot configurations: label, y_values, color, linestyle
+    plot_configurations = {
+        "Active Learning CV": (avg_active_model_f1_plot, "#1f77b4", "-"),
+        "Random Sampling CV": (avg_random_sampling_f1_plot, "#8c564b", "-"),
+        "Active Learning test": (active_test_model_f1, "#2ca02c", "-"),
+        "Random Sampling test": (random_test_sampling_f1, "#d62728", "-"),
+        "Weighted Active Learning test": (weighted_active_f1, "#2ca02c", "--"),
+        "Weighted Random Sampling test": (weighted_random_f1, "#d62728", "--"),
+        "Weighted Active Learning train": (weighted_f1_train_active, "#1f77b4", "--"),
+        "Weighted Random Sampling train": (weighted_f1_train_random, "#8c564b", "--")
+    }
+    
+    # Create the plot
+    plt.figure()
+    for label, (y_values, color, linestyle) in plot_configurations.items():
+        plt.plot(train_sizes_percent, y_values, label=label, color=color, linestyle=linestyle)
+    
+    # Set plot labels, title, and legend
     plt.xlabel("Train Size (%)")
     plt.ylabel("F1 Score")
     plt.title("F1 Score vs. Train Size")
     plt.legend()
     plt.grid(True)
-    #plt.xlim(left=10)
     plt.show()
 
 # Function to fit Gaussian Mixture Model and calculate weights
@@ -333,72 +323,70 @@ def print_debug_info(name, data):
         print(f"{name} - Type: {type(data)}")
         print(f"{name} - Value: {data}")
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.gridspec import GridSpec
 
-# Function to save the joint KDE plot and show data points colored by class
 def plot_joint_kde(x_train, y_train, save_dir="plots", file_name="joint_kde_plot"):
-    # Create directory if it doesn't exist
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    # Ensure the save directory exists
+    os.makedirs(save_dir, exist_ok=True)
 
-    # Create a figure with a specific layout for marginal distributions
-    fig = plt.figure(figsize=(12, 12))  # Keep figure size square
-    gs = GridSpec(5, 4, wspace=0.5, hspace=1.2)  # Increase hspace to add vertical space between plots
+    # Create a square figure with a specific layout for KDE and marginal plots
+    fig = plt.figure(figsize=(12, 12))
+    gs = GridSpec(5, 4, wspace=0.5, hspace=1.2)
 
-    # Create the main KDE plot with data points
-    ax_main = fig.add_subplot(gs[1:3, 0:3])  # Main plot occupies the center
-    sns.kdeplot(x=x_train[:, 0], y=x_train[:, 1], fill=True, ax=ax_main, cmap="Blues", alpha=0.5)
+    # Colors for classes
+    class_colors = {0: "r", 1: "g"}  # Red for spam, Green for ham
 
-    # Overlay scatter plot with different colors for each class
-    classes = np.unique(y_train)
-    colors = ["r", "g"]  # Red for spam, Green for not spam
+    def add_main_kde_plot():
+        """Adds main KDE plot with scatter points for classes."""
+        ax = fig.add_subplot(gs[1:3, 0:3])
+        sns.kdeplot(x=x_train[:, 0], y=x_train[:, 1], fill=True, ax=ax, cmap="Blues", alpha=0.5)
+        for cls, color in class_colors.items():
+            mask = y_train == cls
+            ax.scatter(x_train[mask, 0], x_train[mask, 1], label="spam" if cls == 0 else "ham", 
+                       color=color, edgecolor="black")
+        ax.set_xlabel("Feature 1")
+        ax.set_ylabel("Feature 2")
+        ax.set_title("KDE with Data Points")
+        ax.legend(title="Classes")
+        return ax
 
-    for i, cls in enumerate(classes):
-        # Plot points for each class
-        mask = y_train == cls
-        class_label = "spam" if cls == 0 else "not spam"
-        ax_main.scatter(x_train[mask, 0], x_train[mask, 1], label=class_label, color=colors[i], edgecolor="black")
+    def add_marginal_plots():
+        """Adds marginal KDE plots for each feature."""
+        ax_x = fig.add_subplot(gs[0, 0:3])  # Top marginal
+        ax_y = fig.add_subplot(gs[1:3, 3])  # Right marginal
+        sns.kdeplot(x=x_train[:, 0], ax=ax_x, color='blue', fill=True, alpha=0.5)
+        sns.kdeplot(y=x_train[:, 1], ax=ax_y, color='blue', fill=True, alpha=0.5)
+        ax_x.set_title("Marginal Distribution of Feature 1")
+        ax_x.set_xticks([]); ax_x.set_ylabel("Density")
+        ax_y.set_title("Marginal Distribution of Feature 2 (Flipped)")
+        ax_y.set_yticks([]); ax_y.set_xlabel("Density")
+        return ax_x, ax_y
 
-    # Add axis labels and title for the main plot
-    ax_main.set_xlabel("Feature 1")
-    ax_main.set_ylabel("Feature 2")
-    ax_main.set_title("KDE with Data Points")
-    ax_main.legend(title="Classes")
+    def add_kde_without_data():
+        """Adds bottom KDE plot without scatter points."""
+        ax = fig.add_subplot(gs[3:, 0:3])
+        sns.kdeplot(x=x_train[:, 0], y=x_train[:, 1], fill=True, ax=ax, cmap="Blues", alpha=0.5)
+        ax.set_xlabel("Feature 1")
+        ax.set_ylabel("Feature 2")
+        ax.set_title("Larger KDE without Data Points")
+        return ax
 
-    # Create marginal distributions
-    ax_x = fig.add_subplot(gs[0, 0:3])  # Top marginal
-    ax_y = fig.add_subplot(gs[1:3, 3])  # Right marginal
+    # Create plots
+    add_main_kde_plot()
+    add_marginal_plots()
+    add_kde_without_data()
 
-    # Plotting marginal distribution for Feature 1 (top)
-    sns.kdeplot(x=x_train[:, 0], ax=ax_x, color='blue', fill=True, alpha=0.5)
-    ax_x.set_ylabel("Density")
-    ax_x.set_title("Marginal Distribution of Feature 1")
-    ax_x.set_xticks([])  # Hide x-ticks on marginal plot
-
-    # Plotting marginal distribution for Feature 2 (right, flipped 90 degrees)
-    sns.kdeplot(y=x_train[:, 1], ax=ax_y, color='blue', fill=True, alpha=0.5)  # Flip axis by using y=
-    ax_y.set_aspect('auto')  # Allow plot to stretch horizontally
-    ax_y.set_xlabel("Density")
-    ax_y.set_title("Marginal Distribution of Feature 2 (Flipped)")
-    ax_y.set_yticks([])  # Hide y-ticks on marginal plot
-
-    # Create the second KDE plot without data points, making it square
-    ax_kde_without_data = fig.add_subplot(gs[3:, 0:3])  # Bottom plot spans 2 rows, 3 columns
-    sns.kdeplot(x=x_train[:, 0], y=x_train[:, 1], fill=True, ax=ax_kde_without_data, cmap="Blues", alpha=0.5)
-
-    # Add axis labels and title for the second plot
-    ax_kde_without_data.set_xlabel("Feature 1")
-    ax_kde_without_data.set_ylabel("Feature 2")
-    ax_kde_without_data.set_title("Larger KDE without Data Points")
-
-    # Adjust layout with padding to move the bottom plot down
-    plt.subplots_adjust(bottom=0.1, top=0.95)  # Increase bottom space
-
-    # Save the plot instead of showing it
+    # Adjust layout and save the plot
+    plt.subplots_adjust(bottom=0.1, top=0.95)
     save_path = os.path.join(save_dir, f"{file_name}.png")
-    plt.savefig(save_path, bbox_inches='tight')  # Save the figure to file
+    plt.savefig(save_path, bbox_inches='tight')
     plt.close()  # Close the figure to free memory
-
     print(f"Saved KDE plot to {save_path}")
+
 
 
 # Function to save the simple joint KDE plot
