@@ -25,6 +25,11 @@ from sklearn.metrics import precision_score, log_loss, f1_score as sklearn_f1_sc
 from sklearn.metrics import confusion_matrix
 import os
 from copy import deepcopy
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import pandas as pd
+import plotly.express as px
 
 
 np.seterr(over='ignore')  # Suppress overflow warnings
@@ -72,7 +77,7 @@ def split_pool_set(x_pool, y_pool, test_size, num):
 
 # Function to train the model
 def train_model(x_train, y_train):
-    classifier = LogisticRegression(max_iter=1000)
+    classifier = LogisticRegression(max_iter=1000, penalty=None)
     classifier.fit(x_train, y_train)
     return classifier
 
@@ -99,7 +104,7 @@ def active_learning(x_train, y_train, unlabel, label, target_train_size, total_d
 
         # Predict probabilities for the unlabeled set and select top uncertain samples
         y_probab = classifier.predict_proba(unlabel)[:, 1]
-        num_samples_to_add = min(5, target_train_size - len(y_train))
+        num_samples_to_add = min(1, target_train_size - len(y_train))
         uncertain_indices = get_most_uncertain_samples(y_probab, num_samples_to_add)
 
         # Add selected samples to training data
@@ -152,10 +157,10 @@ def compute_kde_log_weights_for_train(x_train, y_train):
     # gmm.fit(x_train)
     # print_debug_info('X_TRAIN;', x_train)
 
-    kde = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(x_train[:,0:2])
+    kde = KernelDensity(kernel='gaussian', bandwidth='silverman').fit(x_train)
     
     # Compute the log likelihood for each sample
-    log_likelihoods = kde.score_samples(x_train[:,0:2])
+    log_likelihoods = kde.score_samples(x_train)
 
 
     weights=log_likelihoods
@@ -165,7 +170,7 @@ def compute_kde_log_weights_for_train(x_train, y_train):
 
 
 def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=5):
-    classifier = LogisticRegression(max_iter=1000)
+    classifier = LogisticRegression(max_iter=1000, penalty=None)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
     accuracies, precision_scores, losses = [], [], []
@@ -526,7 +531,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             # Compute log weights for active learning
             train_weights_active_loop, kde_loop = compute_kde_log_weights_for_train(x_train_active, y_train_active)
 
-            train_weights_original_active_subset = train_kde.score_samples(x_train_active[:,0:2])
+            train_weights_original_active_subset = train_kde.score_samples(x_train_active)
 
             train_weights_active = np.exp(train_weights_original_active_subset - train_weights_active_loop)
 
@@ -593,6 +598,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             print(f"Error during processing for train size {train_size_percentage*100:.2f}%: {e}")
             continue
 
+        # remove #
         # Store averaged results for this train size
         train_sizes.append(train_size_percentage)
         avg_active_f1_list.append(np.mean(avg_active_model_f1_plot))
