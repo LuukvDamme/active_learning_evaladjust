@@ -416,6 +416,28 @@ def plot_joint_kde_simple(x_train, y_train, save_dir="plots", file_name="joint_k
     print(f"Saved simple KDE plot to {save_path}")
 
 
+
+def scatter_with_weights_matplotlib(x_train, y_train, weights):
+    data = np.column_stack((x_train, y_train))
+
+    plt.figure(figsize=(10, 7))
+    scatter = plt.scatter(
+        x=data[:, 0], y=data[:, 1],
+        c=weights,
+        cmap='viridis',
+        s=weights * 300,
+        alpha=0.6,
+        edgecolors='w',
+        linewidth=0.5
+    )
+    plt.colorbar(scatter, label='Weight')
+    plt.xlabel('X-axis')
+    plt.ylabel('Y-axis')
+    plt.title('Scatter Plot with Weights (Matplotlib)')
+    plt.grid(True)
+    plt.show()
+
+
 def run_experiment(dataset, total_data_size):
     """
     Runs multiple cycles of experiments and aggregates the results.
@@ -489,10 +511,20 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
     combined_unlabel = np.concatenate((x_train, unlabel), axis=0)
     combined_label = np.concatenate((y_train, label), axis=0)
 
+    plot_joint_kde(combined_unlabel, combined_label, save_dir="plots", file_name="initial_and_full_joint_kde")
+    plot_joint_kde_simple(combined_unlabel, combined_label, save_dir="plots", file_name="initial_and_full_joint_kde_simple")
+
     # Compute GMM-based weights for the unlabelled data
     train_weights, train_kde = compute_kde_log_weights_for_train(combined_unlabel, combined_label)
     # Get the shape of the existing array
     shape = train_weights.shape
+
+    # scatter_with_weights_matplotlib(combined_unlabel, combined_label, train_weights)
+    scatter_with_weights_seaborn(combined_unlabel, combined_label, train_weights)
+    scatter_with_heatmap(combined_unlabel, combined_label, train_weights)
+    hexbin_with_weights(combined_unlabel, combined_label, train_weights)
+    # interactive_scatter_with_weights(combined_unlabel, combined_label, train_weights)
+
 
     # Create a new array of ones with the same shape
     dummy_weights_whole_set = np.ones(shape)
@@ -534,6 +566,13 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             train_weights_original_active_subset = train_kde.score_samples(x_train_active)
 
             train_weights_active = np.exp(train_weights_original_active_subset - train_weights_active_loop)
+
+            if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.05), (19.95, 20.05), 
+                                                                                (29.95, 30.05), (39.95, 40.05),
+                                                                                (49.95, 50.05), (59.95, 60.05),
+                                                                                (69.95, 70.05), (79.95, 80.05),
+                                                                                (89.95, 90.05), (99.95, 100.05)]):
+                scatter_with_heatmap(x_train_active, y_train_active, train_weights_active)
 
             #train_weights_active = np.exp(train_weights[y_train_indices] - train_weights_active_loop)
             # train_weights_active = np.exp(train_weights[:len(y_train_active)] - train_weights_active_loop)
@@ -641,6 +680,130 @@ def log_results_append(results, log_file_path):
             f.write(f"{key}: {values}\n")
         f.write('\n\n')
 
+
+
+# 2. Seaborn: Enhanced Aesthetics and Simplicity
+def scatter_with_weights_seaborn(x_train, y_train, weights):
+
+    data_xy = np.column_stack((x_train, y_train))
+
+    x_train=data_xy[:, 0]
+    y_train=data_xy[:, 1]
+    
+    data = pd.DataFrame({
+        'x': x_train,
+        'y': y_train,
+        'weight': weights
+    })
+    plt.figure(figsize=(10, 7))
+    scatter = sns.scatterplot(
+        data=data,
+        x='x',
+        y='y',
+        hue='weight',
+        size='weight',
+        sizes=(50, 300),
+        palette='viridis',
+        alpha=0.6,
+        edgecolor='w',
+        linewidth=0.5
+    )
+    plt.legend(title='Weight', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.xlabel('X-axis')
+    plt.ylabel('Y-axis')
+    plt.title('Seaborn Scatter Plot with Weight Encoding')
+    plt.grid(True)
+    plt.show()
+
+# 3. Overlaying a Heatmap with Scatter Plot
+def scatter_with_heatmap(x_train, y_train, weights):
+
+    data_xy = np.column_stack((x_train, y_train))
+
+    x_train=data_xy[:, 0]
+    y_train=data_xy[:, 1]
+
+    plt.figure(figsize=(10, 7))
+    sns.kdeplot(
+        x=x_train, y=y_train,
+        weights=weights,
+        cmap="Reds",
+        fill=True,
+        thresh=0,
+        alpha=0.5
+    )
+    plt.scatter(
+        x_train, y_train,
+        c=weights,
+        cmap='viridis',
+        s=50,
+        alpha=0.6,
+        edgecolors='w',
+        linewidth=0.5
+    )
+    plt.colorbar(label='Weight')
+    plt.xlabel('X-axis')
+    plt.ylabel('Y-axis')
+    plt.title('Scatter Plot with KDE Heatmap Overlay')
+    plt.show()
+
+# 4. Hexbin Plot for Aggregated Weights
+def hexbin_with_weights(x_train, y_train, weights):
+
+    data_xy = np.column_stack((x_train, y_train))
+
+    x_train=data_xy[:, 0]
+    y_train=data_xy[:, 1]
+
+    plt.figure(figsize=(10, 7))
+    hb = plt.hexbin(
+        x_train, y_train,
+        C=weights,
+        gridsize=50,
+        cmap='viridis',
+        reduce_C_function=np.mean,
+        mincnt=1
+    )
+    plt.colorbar(hb, label='Average Weight')
+    plt.xlabel('X-axis')
+    plt.ylabel('Y-axis')
+    plt.title('Hexbin Plot with Aggregated Weights')
+    plt.show()
+
+# 5. Interactive Plotly Scatter Plot
+def interactive_scatter_with_weights(x_train, y_train, weights):
+    
+    weights = np.abs(weights)
+
+    data_xy = np.column_stack((x_train, y_train))
+
+    x_train=data_xy[:, 0]
+    y_train=data_xy[:, 1]
+
+    data = pd.DataFrame({
+        'x': x_train,
+        'y': y_train,
+        'weight': weights
+    })
+    fig = px.scatter(
+        data_frame=data,
+        x='x',
+        y='y',
+        color='weight',
+        size='weight',
+        hover_data=['weight'],
+        color_continuous_scale='Viridis',
+        size_max=20,
+        title='Interactive Scatter Plot with Weights'
+    )
+    fig.update_layout(
+        xaxis_title='X-axis',
+        yaxis_title='Y-axis',
+        coloraxis_colorbar=dict(title='Weight')
+    )
+    fig.show()
+
+
 def main(plot_results=True):
     # Overwrite the file at the start of the script to reset it
     with open('./weights_loop.txt', 'w') as file:
@@ -689,29 +852,21 @@ def main(plot_results=True):
     cumulative_results = {key: [] for key in ['avg_active_f1', 'random_sampling_f1', 'active_test_f1', 'random_test_f1', 'weighted_active_f1', 'weighted_random_f1', 'weighted_train_active_f1', 'weighted_train_random_f1']}
     successful_experiments = 0  # Counter for successful experiments
     for _ in range(experiments):
-        try:
-            # Run experiment
-            train_sizes, results, x_test, y_test, classifier_active, classifier_rand = run_experiment(dataset, total_data_size)
+        # Run experiment
+        train_sizes, results, x_test, y_test, classifier_active, classifier_rand = run_experiment(dataset, total_data_size)
 
-            # Check if any results contain NaN values
-            if any(np.isnan(val) for result in results.values() for val in result):
-                print("NaN value found in results, skipping this iteration.")
-                continue  # Skip the current experiment if NaN is found
+        # Check if any results contain NaN values
+        if any(np.isnan(val) for result in results.values() for val in result):
+            print("NaN value found in results, skipping this iteration.")
+            continue  # Skip the current experiment if NaN is found
 
-            # Store the results of the current experiment
-            for key in cumulative_results:
-                cumulative_results[key].append(results[key])
-            
-            # Increment successful experiments counter
-            successful_experiments += 1
+        # Store the results of the current experiment
+        for key in cumulative_results:
+            cumulative_results[key].append(results[key])
+        
+        # Increment successful experiments counter
+        successful_experiments += 1
 
-        except ValueError as e:
-            print(f"ValueError encountered during the experiment: {e}")
-            continue  # Continue to the next experiment
-
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            continue  # Continue to the next experiment
 
     # Final averages after all successful experiments
     if successful_experiments > 0:
