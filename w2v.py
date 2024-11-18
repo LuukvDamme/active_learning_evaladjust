@@ -157,10 +157,10 @@ def compute_kde_log_weights_for_train(x_train, y_train):
     # gmm.fit(x_train)
     # print_debug_info('X_TRAIN;', x_train)
 
-    kde = KernelDensity(kernel='gaussian', bandwidth='silverman').fit(x_train)
+    kde = KernelDensity(kernel='gaussian', bandwidth='silverman').fit(x_train[:,0:2])
     
     # Compute the log likelihood for each sample
-    log_likelihoods = kde.score_samples(x_train)
+    log_likelihoods = kde.score_samples(x_train[:,0:2])
 
 
     weights=log_likelihoods
@@ -169,7 +169,7 @@ def compute_kde_log_weights_for_train(x_train, y_train):
     return weights, kde    # To assign weights based on class labels
 
 
-def evaluate_model_on_train_set_weighted(classifier, x_train, y_train, weights, n_splits=5):
+def evaluate_model_on_train_set_weighted(x_train, y_train, weights, n_splits=5):
     classifier = LogisticRegression(max_iter=1000, penalty=None)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
@@ -563,7 +563,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             # Compute log weights for active learning
             train_weights_active_loop, kde_loop = compute_kde_log_weights_for_train(x_train_active, y_train_active)
 
-            train_weights_original_active_subset = train_kde.score_samples(x_train_active)
+            train_weights_original_active_subset = train_kde.score_samples(x_train_active[:,0:2])
 
             train_weights_active = np.exp(train_weights_original_active_subset - train_weights_active_loop)
 
@@ -573,6 +573,10 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
                                                                                 (69.95, 70.05), (79.95, 80.05),
                                                                                 (89.95, 90.05), (99.95, 100.05)]):
                 scatter_with_heatmap(x_train_active, y_train_active, train_weights_active)
+                scatter_with_weights_seaborn(x_train_active, y_train_active, train_weights_active)
+                hexbin_with_weights(x_train_active, y_train_active, train_weights_active)
+
+
 
             #train_weights_active = np.exp(train_weights[y_train_indices] - train_weights_active_loop)
             # train_weights_active = np.exp(train_weights[:len(y_train_active)] - train_weights_active_loop)
@@ -593,7 +597,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             classifier_active = train_model(x_train_active, y_train_active)
 
             _, active_f1, _, _, _ = evaluate_model_on_train_set_weighted(
-                classifier_active, x_train_active, y_train_active, dummy_weights
+                x_train_active, y_train_active, dummy_weights
             )
             avg_active_model_f1_plot.append(active_f1)
 
@@ -607,7 +611,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             weighted_active_f1.append(weighted_f1_active)
 
             _, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(
-                classifier_active, x_train_active, y_train_active, train_weights_active
+                x_train_active, y_train_active, train_weights_active
             )
             weighted_f1_train_active_list_run.append(weighted_f1_train_active)
 
@@ -618,7 +622,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
 
 
             classifier_rand = train_model(x_rand_train, y_rand_train)
-            avg_accuracy, rand_f1, _, _, _ = evaluate_model_on_train_set_weighted(classifier_rand, x_rand_train, y_rand_train, dummy_weights_whole_set[:len(y_rand_train)])
+            avg_accuracy, rand_f1, _, _, _ = evaluate_model_on_train_set_weighted(x_rand_train, y_rand_train, dummy_weights_whole_set[:len(y_rand_train)])
             avg_random_sampling_f1_plot.append(rand_f1)
 
             _, random_test_f1, _, _, _ = evaluate_model_on_test_set(classifier_rand, x_test, y_test)
@@ -629,7 +633,7 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             weighted_random_f1.append(weighted_f1_rand)
 
             _, weighted_f1_train_random, _, _, _ = evaluate_model_on_train_set_weighted(
-                classifier_rand, x_rand_train, y_rand_train, train_weights[:len(y_rand_train)]
+                x_rand_train, y_rand_train, train_weights[:len(y_rand_train)]
             )
             weighted_f1_train_random_list_run.append(weighted_f1_train_random)
 
