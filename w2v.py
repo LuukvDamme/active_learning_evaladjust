@@ -30,6 +30,7 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 import plotly.express as px
+from scipy.stats import wasserstein_distance
 
 
 np.seterr(over='ignore')  # Suppress overflow warnings
@@ -520,9 +521,9 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
     shape = train_weights.shape
 
     # scatter_with_weights_matplotlib(combined_unlabel, combined_label, train_weights)
-    scatter_with_weights_seaborn(combined_unlabel, combined_label, train_weights)
-    scatter_with_heatmap(combined_unlabel, combined_label, train_weights)
-    hexbin_with_weights(combined_unlabel, combined_label, train_weights)
+    # scatter_with_weights_seaborn(combined_unlabel, combined_label, train_weights)
+    # scatter_with_heatmap(combined_unlabel, combined_label, train_weights, "scatter_heatmap_full.png")
+    # hexbin_with_weights(combined_unlabel, combined_label, train_weights)
     # interactive_scatter_with_weights(combined_unlabel, combined_label, train_weights)
 
 
@@ -565,16 +566,23 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
 
             train_weights_original_active_subset = train_kde.score_samples(x_train_active[:,0:2])
 
+            
+            
             train_weights_active = np.exp(train_weights_original_active_subset - train_weights_active_loop)
 
-            if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.05), (19.95, 20.05), 
-                                                                                (29.95, 30.05), (39.95, 40.05),
-                                                                                (49.95, 50.05), (59.95, 60.05),
-                                                                                (69.95, 70.05), (79.95, 80.05),
-                                                                                (89.95, 90.05), (99.95, 100.05)]):
-                scatter_with_heatmap(x_train_active, y_train_active, train_weights_active)
-                scatter_with_weights_seaborn(x_train_active, y_train_active, train_weights_active)
-                hexbin_with_weights(x_train_active, y_train_active, train_weights_active)
+            train_weights_active = train_weights_active ** 2
+            print(train_weights_active)
+            distance = wasserstein_distance(train_weights, train_weights_active)
+            print(f"Wasserstein Distance: {distance}")
+
+            # if any(lower <= train_size_percentage * 100 <= upper for lower, upper in [(9.95, 10.05), (19.95, 20.05), 
+            #                                                                     (29.95, 30.05), (39.95, 40.05),
+            #                                                                     (49.95, 50.05), (59.95, 60.05),
+            #                                                                     (69.95, 70.05), (79.95, 80.05),
+            #                                                                     (89.95, 90.05), (99.95, 100.05)]):
+                # scatter_with_heatmap(x_train_active, y_train_active, train_weights_active, f"scatter_heatmap_{train_size_percentage:.2f}")
+                # scatter_with_weights_seaborn(x_train_active, y_train_active, train_weights_active)
+                # hexbin_with_weights(x_train_active, y_train_active, train_weights_active)
 
 
 
@@ -609,6 +617,8 @@ def run_training_cycle(dataset, initial_train_size, total_data_size):
             # Compute weighted F1 for active learning
             _, weighted_f1_active, _, _, _ = evaluate_model_on_test_set_weighted(classifier_active, x_test, y_test)
             weighted_active_f1.append(weighted_f1_active)
+
+            # print(train_weights_active)
 
             _, weighted_f1_train_active, _, _, _ = evaluate_model_on_train_set_weighted(
                 x_train_active, y_train_active, train_weights_active
@@ -719,13 +729,12 @@ def scatter_with_weights_seaborn(x_train, y_train, weights):
     plt.grid(True)
     plt.show()
 
-# 3. Overlaying a Heatmap with Scatter Plot
-def scatter_with_heatmap(x_train, y_train, weights):
-
+# Overlaying a Heatmap with Scatter Plot
+def scatter_with_heatmap(x_train, y_train, weights, filename):
     data_xy = np.column_stack((x_train, y_train))
 
-    x_train=data_xy[:, 0]
-    y_train=data_xy[:, 1]
+    x_train = data_xy[:, 0]
+    y_train = data_xy[:, 1]
 
     plt.figure(figsize=(10, 7))
     sns.kdeplot(
@@ -749,63 +758,8 @@ def scatter_with_heatmap(x_train, y_train, weights):
     plt.xlabel('X-axis')
     plt.ylabel('Y-axis')
     plt.title('Scatter Plot with KDE Heatmap Overlay')
-    plt.show()
-
-# 4. Hexbin Plot for Aggregated Weights
-def hexbin_with_weights(x_train, y_train, weights):
-
-    data_xy = np.column_stack((x_train, y_train))
-
-    x_train=data_xy[:, 0]
-    y_train=data_xy[:, 1]
-
-    plt.figure(figsize=(10, 7))
-    hb = plt.hexbin(
-        x_train, y_train,
-        C=weights,
-        gridsize=50,
-        cmap='viridis',
-        reduce_C_function=np.mean,
-        mincnt=1
-    )
-    plt.colorbar(hb, label='Average Weight')
-    plt.xlabel('X-axis')
-    plt.ylabel('Y-axis')
-    plt.title('Hexbin Plot with Aggregated Weights')
-    plt.show()
-
-# 5. Interactive Plotly Scatter Plot
-def interactive_scatter_with_weights(x_train, y_train, weights):
-    
-    weights = np.abs(weights)
-
-    data_xy = np.column_stack((x_train, y_train))
-
-    x_train=data_xy[:, 0]
-    y_train=data_xy[:, 1]
-
-    data = pd.DataFrame({
-        'x': x_train,
-        'y': y_train,
-        'weight': weights
-    })
-    fig = px.scatter(
-        data_frame=data,
-        x='x',
-        y='y',
-        color='weight',
-        size='weight',
-        hover_data=['weight'],
-        color_continuous_scale='Viridis',
-        size_max=20,
-        title='Interactive Scatter Plot with Weights'
-    )
-    fig.update_layout(
-        xaxis_title='X-axis',
-        yaxis_title='Y-axis',
-        coloraxis_colorbar=dict(title='Weight')
-    )
-    fig.show()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')  # Save the plot
+    plt.close()  # Close the plot to free memory
 
 
 def main(plot_results=True):
